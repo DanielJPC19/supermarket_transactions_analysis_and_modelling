@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Box, createTheme, CssBaseline, Grid, ThemeProvider, Typography,
+  Box, Button, Container, createTheme, CssBaseline, Grid, ThemeProvider, Typography,
 } from '@mui/material';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import './App.css';
 
 import Sidebar, { DRAWER_WIDTH } from './components/Sidebar';
@@ -39,33 +40,54 @@ function SectionTitle({ children }) {
   );
 }
 
-function EtlPanel({ jobStatus }) {
-  const etl  = jobStatus?.ETL;
-  const kpis = jobStatus?.KPIs;
-
+function StatusCard({ title, job }) {
   const Row = ({ label, value }) => (
-    <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.6 }}>
       <Typography variant="body2" color="text.secondary">{label}</Typography>
       <Typography variant="body2" fontWeight={500}>{value ?? '—'}</Typography>
     </Box>
   );
-
   return (
-    <Box sx={{ maxWidth: 480 }}>
-      <SectionTitle>Estado del ETL</SectionTitle>
-      <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, p: 2.5, mb: 3, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-        <Row label="Estado" value={etl?.status ?? 'Sin datos'} />
-        <Row label="Inicio" value={etl?.started_at ? new Date(etl.started_at).toLocaleString('es-CO') : null} />
-        <Row label="Fin"    value={etl?.finished_at ? new Date(etl.finished_at).toLocaleString('es-CO') : null} />
-        {etl?.message && <Row label="Mensaje" value={etl.message} />}
-      </Box>
+    <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, p: 2.5, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', height: '100%' }}>
+      <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5, color: 'text.primary' }}>
+        {title}
+      </Typography>
+      <Row label="Estado" value={job?.status ?? 'Sin datos'} />
+      <Row label="Inicio" value={job?.started_at ? new Date(job.started_at).toLocaleString('es-CO') : null} />
+      <Row label="Fin"    value={job?.finished_at ? new Date(job.finished_at).toLocaleString('es-CO') : null} />
+      {job?.message && <Row label="Mensaje" value={job.message} />}
+    </Box>
+  );
+}
 
-      <SectionTitle>Estado del cómputo de KPIs</SectionTitle>
-      <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, p: 2.5, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-        <Row label="Estado" value={kpis?.status ?? 'Sin datos'} />
-        <Row label="Inicio" value={kpis?.started_at ? new Date(kpis.started_at).toLocaleString('es-CO') : null} />
-        <Row label="Fin"    value={kpis?.finished_at ? new Date(kpis.finished_at).toLocaleString('es-CO') : null} />
-        {kpis?.message && <Row label="Mensaje" value={kpis.message} />}
+function EtlPanel({ jobStatus, onTriggerEtl }) {
+  const etlRunning = jobStatus?.ETL?.status === 'running';
+  return (
+    <Box sx={{ maxWidth: 860, mx: 'auto' }}>
+      <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>
+        Gestión del ETL
+      </Typography>
+
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <StatusCard title="Estado del ETL" job={jobStatus?.ETL} />
+        </Grid>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <StatusCard title="Estado del cómputo de KPIs" job={jobStatus?.KPIs} />
+        </Grid>
+      </Grid>
+
+      <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+        <Button
+          variant="contained"
+          startIcon={<PlayArrowIcon />}
+          disabled={etlRunning}
+          onClick={onTriggerEtl}
+          size="large"
+          sx={{ px: 4, borderRadius: 2 }}
+        >
+          {etlRunning ? 'Ejecutando...' : 'Ejecutar ETL'}
+        </Button>
       </Box>
     </Box>
   );
@@ -73,7 +95,7 @@ function EtlPanel({ jobStatus }) {
 
 function DashboardContent({ refreshKey, kpiVentas, kpiTx }) {
   return (
-    <>
+    <Container maxWidth="xl">
       {/* KPI Cards */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid size={{ xs: 6, sm: 3 }}>
@@ -144,7 +166,7 @@ function DashboardContent({ refreshKey, kpiVentas, kpiTx }) {
       <Typography variant="caption" color="text.disabled" display="block" align="center" sx={{ pb: 2 }}>
         Datos: Transacciones 2013 · 4 Sucursales · Procesamiento distribuido con Apache Spark
       </Typography>
-    </>
+    </Container>
   );
 }
 
@@ -217,7 +239,6 @@ export default function App() {
           onNavChange={setActiveSection}
           jobStatus={jobStatus}
           cacheWarm={cacheWarm}
-          onTriggerEtl={handleTriggerEtl}
         />
         <Box
           component="main"
@@ -231,7 +252,7 @@ export default function App() {
             />
           )}
           {activeSection === 'etl' && (
-            <EtlPanel jobStatus={jobStatus} />
+            <EtlPanel jobStatus={jobStatus} onTriggerEtl={handleTriggerEtl} />
           )}
         </Box>
       </Box>

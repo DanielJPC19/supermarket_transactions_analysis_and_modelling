@@ -1,12 +1,11 @@
 import {
-  Box, Chip, Divider, Drawer, IconButton, List, ListItemButton,
+  Box, Chip, Divider, Drawer, List, ListItemButton,
   ListItemIcon, ListItemText, Tooltip, Typography,
 } from '@mui/material';
 import StorageIcon from '@mui/icons-material/Storage';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import ScatterPlotIcon from '@mui/icons-material/ScatterPlot';
 import RecommendIcon from '@mui/icons-material/Recommend';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StatusBadge from './StatusBadge';
 
 export const DRAWER_WIDTH = 240;
@@ -18,9 +17,8 @@ const NAV_ITEMS = [
   { id: 'recomendador', label: 'Recomendador',  icon: <RecommendIcon />,   enabled: false },
 ];
 
-export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWarm, onTriggerEtl }) {
+export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWarm }) {
   const etlStatus = jobStatus?.ETL?.status ?? null;
-  const kpiStatus = jobStatus?.KPIs?.status ?? null;
 
   return (
     <Drawer
@@ -98,35 +96,6 @@ export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWa
           );
         })}
       </List>
-
-      {/* ETL trigger en la parte inferior de la sidebar cuando la sección activa es ETL */}
-      {activeSection === 'etl' && (
-        <>
-          <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-          <Box sx={{ p: 2 }}>
-            <IconButton
-              onClick={onTriggerEtl}
-              disabled={etlStatus === 'running'}
-              size="small"
-              sx={{
-                bgcolor: 'primary.main',
-                color: 'white',
-                width: '100%',
-                borderRadius: 2,
-                py: 0.8,
-                gap: 1,
-                '&:hover': { bgcolor: 'primary.dark' },
-                '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.3)' },
-              }}
-            >
-              <PlayArrowIcon fontSize="small" />
-              <Typography variant="caption" fontWeight={600}>
-                {etlStatus === 'running' ? 'Ejecutando...' : 'Ejecutar ETL'}
-              </Typography>
-            </IconButton>
-          </Box>
-        </>
-      )}
     </Drawer>
   );
 }

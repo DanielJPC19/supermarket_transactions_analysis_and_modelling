@@ -88,23 +88,20 @@ def chart_categorias(data: list[dict]) -> str:
     if otros_total > 0:
         main.append({"nombre_categoria": "Otros", "total_cantidad": otros_total, "pct": otros_pct})
 
-    # Orden ascendente para que la barra más grande quede arriba
-    main_sorted = sorted(main, key=lambda d: d["total_cantidad"])
+    main_sorted = sorted(main, key=lambda d: d["total_cantidad"], reverse=True)
     nombres = [d["nombre_categoria"] for d in main_sorted]
     totales = [d["total_cantidad"] for d in main_sorted]
-    pcts    = [d["pct"] for d in main_sorted]
 
-    fig = go.Figure(go.Bar(
-        x=totales, y=nombres, orientation="h",
-        marker_color=PALETTE[:len(main_sorted)],
-        text=[f"{p:.1f}%" for p in pcts],
-        textposition="outside",
-        hovertemplate="<b>%{y}</b><br>%{x:,} unidades · %{text}<extra></extra>",
+    fig = go.Figure(go.Pie(
+        labels=nombres,
+        values=totales,
+        textinfo="none",
+        hovertemplate="<b>%{label}</b><br>%{percent}<br>%{value:,} unidades<extra></extra>",
+        marker=dict(colors=PALETTE[:len(main_sorted)]),
     ))
     fig.update_layout(
         **_LAYOUT,
         title=dict(text="Categorías más Rentables por Volumen", x=0.5),
-        xaxis_title="Total unidades vendidas",
         showlegend=False,
         height=480,
     )
