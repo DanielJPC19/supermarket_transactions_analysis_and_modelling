@@ -26,20 +26,21 @@ Cada archivo es una sucursal. Ante un nuevo archivo (nueva sucursal), el sistema
 El sistema está compuesto por tres capas principales:
 
 ```
-Web Server (Front-end)
-        ↕  WebSocket / HTTP
+Frontend React (Vite — puerto 5173)
+        ↕  WebSocket ws://localhost:8000/ws/jobs
+        ↕  HTTP REST  http://localhost:8000
     Back-end  (monolito modular — FastAPI)
     ├── etl/          →  Ingesta y transformación de datos
     ├── dispatcher/   →  Orquestación de jobs Spark + watcher de archivos
     ├── eda_kpis/     →  Cómputo de KPIs y generación de visualizaciones
-    └── websocket/    →  (futuro) comunicación en tiempo real
+    └── websocket/    →  ConnectionManager + SQLite de estado de jobs
               ↕
     spark_jobs/       →  SparkSession (local[*] o cluster externo)
               ↕
     Spark Master + Driver → Workers
 ```
 
-Los datos procesados se almacenan como **Parquet particionado** en `data/processed/transactions_enriched/` (simula el Bucket de Datos de la arquitectura). Los KPIs calculados se cachean como JSON en `data/processed/kpis/`.
+Los datos procesados se almacenan como **Parquet particionado** en `data/processed/transactions_enriched/` (simula el Bucket de Datos de la arquitectura). Los KPIs calculados se cachean como JSON en `data/processed/kpis/`. El estado de los jobs ETL y KPIs se persiste en `data/jobs.db` (SQLite, separado del bucket).
 
 ---
 
@@ -49,13 +50,16 @@ Los datos procesados se almacenan como **Parquet particionado** en `data/process
 |-----------|---------------|
 | Python | 3.11+ (probado en 3.14.4) |
 | Java | 11+ (requerido por Apache Spark) |
+| Node.js | 18+ (requerido por el frontend React) |
 | RAM | 4 GB mínimo, 8 GB recomendado |
 | Disco | ~2 GB para los datos procesados |
 
-Verificar que Java esté instalado:
+Verificar las dependencias de sistema:
 
 ```bash
 java -version
+node --version   # debe ser v18+
+npm --version
 ```
 
 ---
@@ -85,15 +89,29 @@ pip install -r requirements.txt
 
 Las dependencias principales son:
 
+**Backend (Python):**
+
 | Librería | Versión | Rol |
 |----------|---------|-----|
 | `pyspark` | 4.1.1 | Procesamiento distribuido de datos |
-| `fastapi` | 0.136.1 | API REST y servidor web |
+| `fastapi` | 0.136.1 | API REST + WebSocket |
 | `uvicorn` | 0.47.0 | Servidor ASGI |
 | `plotly` | 5.24.1 | Generación de visualizaciones interactivas |
 | `pandas` | 3.0.3 | Puente Spark → Plotly para charts |
 | `python-dotenv` | 1.2.2 | Gestión de variables de entorno |
 | `numpy` | 2.4.3 | Cómputo numérico (correlaciones) |
+
+**Frontend (Node.js — instalar por separado):**
+
+| Paquete | Rol |
+|---------|-----|
+| `react` + `react-dom` | Framework UI |
+| `vite` | Build tool y dev server |
+| `@mui/material` + `@emotion/*` | Componentes Material UI |
+| `@mui/icons-material` | Iconografía MUI |
+| `plotly.js` | Renderizado de figuras Plotly en el browser |
+
+> Node.js 18+ requerido para el frontend. Verificar: `node --version`
 
 ### 4. Configurar variables de entorno
 
@@ -192,10 +210,11 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 Al arrancar, el servidor ejecuta automáticamente los siguientes pasos en orden:
 
-1. **Verifica si el ETL es necesario** — compara un fingerprint (nombre + tamaño + fecha de modificación) de los archivos en `Transactions/` con el estado guardado. Si hay cambios o es la primera ejecución, lanza el ETL.
-2. **ETL (si es necesario)** — lee los CSV crudos, transforma y enriquece los datos con PySpark, y guarda el resultado como Parquet en `data/processed/transactions_enriched/` particionado por `sucursal_id`.
-3. **Cómputo de KPIs** — si el cache de KPIs no está disponible, lanza en background el cómputo de los 9 indicadores y charts con PySpark (~3–8 minutos en local). Los resultados se guardan en `data/processed/kpis/`.
-4. **Watcher de archivos** — inicia un proceso en background que monitorea `DataSet/DataSet/Transactions/`. Si detecta un nuevo archivo `*_Tran.csv`, re-ejecuta el ETL y el cómputo de KPIs automáticamente.
+1. **Inicializa la base de datos de jobs** — crea `data/jobs.db` (SQLite) si no existe.
+2. **Verifica si el ETL es necesario** — compara un fingerprint (nombre + tamaño + fecha de modificación) de los archivos en `Transactions/` con el estado guardado. Si hay cambios o es la primera ejecución, lanza el ETL.
+3. **ETL (si es necesario)** — lee los CSV crudos, transforma y enriquece los datos con PySpark, y guarda el resultado como Parquet en `data/processed/transactions_enriched/` particionado por `sucursal_id`. El estado del job se registra en `data/jobs.db` y se transmite por WebSocket en tiempo real.
+4. **Cómputo de KPIs** — si el cache de KPIs no está disponible, lanza en background el cómputo de los 9 indicadores y charts con PySpark (~3–8 minutos en local). Los resultados se guardan en `data/processed/kpis/`. El estado también se registra en `data/jobs.db` y se transmite por WebSocket.
+5. **Watcher de archivos** — inicia un proceso en background que monitorea `DataSet/DataSet/Transactions/`. Si detecta un nuevo archivo `*_Tran.csv`, re-ejecuta el ETL y el cómputo de KPIs automáticamente.
 
 > **Nota sobre tiempos:** El ETL sobre 1.1 millones de transacciones tarda ~2–4 minutos en `local[*]`. El cómputo de KPIs sobre los ~10.5 millones de filas enriquecidas tarda ~3–8 minutos adicionales. En ejecuciones posteriores, ambos pasos se omiten si los datos no cambiaron.
 
@@ -225,33 +244,59 @@ Los archivos en `dist/` pueden servirse desde cualquier servidor estático (Ngin
 
 ---
 
-## Dashboard
+## Dashboard (Frontend React)
 
-Abrir en el navegador: **`http://localhost:8000`**
+Abrir en el navegador: **`http://localhost:5173`** (requiere el backend corriendo en el puerto 8000).
 
-El dashboard se actualiza automáticamente cada 15 segundos mientras el cómputo de KPIs está en progreso. El indicador en la barra superior muestra el estado:
+El frontend está construido en **React + Vite** con **Material UI** y se comunica con el backend vía HTTP REST y WebSocket.
 
-- 🟡 **Computando KPIs...** — el cómputo está en progreso, los charts aparecerán progresivamente
-- 🟢 **Cache actualizado** — todos los datos están disponibles
+### Navegación — Barra lateral
 
-### Resumen Ejecutivo
+La interfaz cuenta con una barra lateral permanente con las siguientes secciones:
+
+| Sección | Estado | Descripción |
+|---------|--------|-------------|
+| **ETL** | Activo | Panel de gestión del ETL: estado en tiempo real + botón de trigger |
+| **EDA + KPIs** | Activo | Dashboard analítico completo |
+| **K-Means** | Próximamente | Segmentación de clientes |
+| **Recomendador** | Próximamente | Sistema de recomendación de productos |
+
+### Sección: Gestión del ETL
+
+Muestra en tiempo real (via WebSocket) el estado de los dos jobs del sistema:
+
+- **Estado del ETL** — `running` / `completed` / `failed`, con timestamps de inicio y fin
+- **Estado del cómputo de KPIs** — misma información para el job de KPIs
+- **Botón "Ejecutar ETL"** — lanza manualmente el ETL completo en background (equivalente a `POST /etl/trigger`)
+
+Los estados se persisten en `data/jobs.db` y se actualizan automáticamente al conectar y durante la ejecución.
+
+### Sección: EDA + KPIs — Resumen Ejecutivo
 
 | Indicador | Descripción | Tipo de gráfico |
 |-----------|-------------|-----------------|
 | Total unidades vendidas | Suma de todas las unidades compradas en el período | KPI card numérico |
 | Total transacciones | Visitas únicas (fecha + sucursal + cliente) | KPI card numérico |
+| Clientes únicos | Total de clientes distintos | KPI card estático |
+| Productos únicos | Total de productos distintos | KPI card estático |
 | Top 10 productos | Productos más comprados por volumen | Barras horizontales |
 | Top 10 clientes | Clientes con más transacciones | Barras horizontales |
 | Top 30 días pico | Días con mayor actividad, coloreados por día de semana | Barras verticales |
-| Categorías rentables | Participación por volumen de cada categoría | Donut + barras |
+| Categorías rentables | Categorías con ≥ 3% del volumen total; el resto agrupado como "Otros" | Torta (solo colores + hover) |
 
-### Visualizaciones Analíticas
+### Sección: EDA + KPIs — Visualizaciones Analíticas
 
 | Visualización | Descripción |
 |---------------|-------------|
 | Serie de tiempo | Transacciones diarias (Ene–Jun 2013) con media móvil de 7 días superpuesta |
 | Boxplot | Distribución de unidades compradas por cliente (131,186 clientes), con media y outliers |
 | Heatmap de correlación | Matriz de Pearson 4×4 entre: frecuencia, total cantidad, productos distintos y categorías distintas por cliente |
+
+### Comportamiento de actualización
+
+- Al cargar la página, el dashboard hace polling a `/analytics/status` cada 15 s (configurable con `VITE_POLL_INTERVAL_MS`) hasta que el cache de KPIs esté warm.
+- Cuando el job de KPIs completa, el backend notifica vía WebSocket y el dashboard recarga los charts automáticamente sin intervención del usuario.
+- Máximo de reintentos de polling: 30 (configurable con `VITE_MAX_RETRIES`), equivalente a ~7.5 minutos.
 
 ---
 
@@ -268,6 +313,26 @@ La API está disponible en `http://localhost:8000`. Documentación interactiva (
 | `POST` | `/etl/trigger` | Fuerza re-ejecución del ETL en background |
 | `GET` | `/analytics/status` | Si el cache de KPIs está listo (`cache_warm`) |
 | `POST` | `/analytics/compute` | Fuerza recomputo de todos los KPIs en background |
+
+### WebSocket — Estado de jobs en tiempo real
+
+| Protocolo | Ruta | Descripción |
+|-----------|------|-------------|
+| `WS` | `/ws/jobs` | Stream de estado de jobs ETL y KPIs |
+
+Al conectar, el servidor envía el historial reciente de jobs (últimas 20 entradas de `data/jobs.db`). Cada evento posterior tiene la forma:
+
+```json
+{"type": "ETL", "status": "running", "job_id": 5}
+{"type": "ETL", "status": "completed", "job_id": 5}
+{"type": "KPIs", "status": "failed", "job_id": 6, "message": "..."}
+```
+
+Valores posibles de `status`: `running` · `completed` · `failed`
+
+Valores posibles de `type`: `ETL` · `KPIs`
+
+La conexión se reconecta automáticamente cada 3 s si se pierde.
 
 ### Endpoints de KPIs (datos crudos JSON)
 
@@ -291,7 +356,7 @@ Cada endpoint retorna un objeto JSON de figura Plotly listo para renderizar con 
 | `GET` | `/analytics/charts/top10-productos` | Barras horizontales — Top 10 productos |
 | `GET` | `/analytics/charts/top10-clientes` | Barras horizontales — Top 10 clientes |
 | `GET` | `/analytics/charts/dias-pico` | Barras verticales — Días pico |
-| `GET` | `/analytics/charts/categorias` | Donut + barras — Categorías |
+| `GET` | `/analytics/charts/categorias` | Torta — Categorías (umbral 3%, "Otros" agrupa el resto) |
 | `GET` | `/analytics/charts/serie-tiempo` | Línea con área — Serie temporal diaria |
 | `GET` | `/analytics/charts/boxplot` | Boxplot — Distribución por cliente |
 | `GET` | `/analytics/charts/heatmap` | Heatmap — Correlación entre variables |
@@ -305,45 +370,51 @@ proyecto/
 ├── .env                            # Variables de entorno backend (Spark, paths, API)
 ├── requirements.txt                # Dependencias Python
 ├── backend/                        # Monolito modular — FastAPI
-│   ├── main.py                     # Entry point: lifespan, CORS, rutas API
-│   ├── config.py                   # Constantes centralizadas (paths, env vars)
+│   ├── main.py                     # Entry point: lifespan, CORS, WebSocket endpoint
+│   ├── config.py                   # Constantes centralizadas (paths, env vars, JOBS_DB_PATH)
 │   ├── etl/                        # Módulo ETL
 │   │   ├── reader.py               # Lee CSV crudos con schema explícito
 │   │   ├── transformer.py          # Parsea, explota productos, enriquece con categorías
 │   │   └── writer.py               # Escribe Parquet particionado por sucursal_id
 │   ├── dispatcher/                 # Módulo Dispatcher Spark
-│   │   ├── dispatcher.py           # Fingerprint, lógica ETL needed, orquestación
+│   │   ├── dispatcher.py           # Fingerprint, ETL needed, notificaciones WS
 │   │   └── watcher.py              # Watcher async de nuevos archivos (watchfiles)
 │   ├── eda_kpis/                   # Módulo EDA + KPIs
 │   │   ├── computer.py             # 9 cómputos PySpark (KPIs + datasets para charts)
 │   │   ├── charts.py               # 7 figuras Plotly (fig.to_json())
 │   │   ├── cache.py                # Lectura/escritura JSON en disco
-│   │   └── router.py               # APIRouter /analytics/* + run_kpis_sync()
-│   └── websocket/                  # Módulo WebSocket Manager (en desarrollo)
+│   │   └── router.py               # APIRouter /analytics/* + run_kpis_sync() + notif. WS
+│   └── websocket/                  # Módulo WebSocket
+│       ├── manager.py              # ConnectionManager (broadcast a clientes conectados)
+│       └── db.py                   # SQLite: init_db, insert_job, update_job, get_recent_jobs
 ├── frontend/                       # App React — dashboard independiente
-│   ├── .env                        # VITE_API_URL=http://localhost:8000
+│   ├── .env                        # VITE_API_URL, VITE_POLL_INTERVAL_MS, VITE_MAX_RETRIES
 │   ├── package.json
 │   ├── vite.config.js
 │   └── src/
 │       ├── main.jsx                # Entry React
-│       ├── App.jsx                 # Layout principal + polling de estado
-│       ├── App.css                 # Estilos del dashboard
+│       ├── App.jsx                 # Layout MUI: sidebar + sección ETL + sección EDA
+│       ├── App.css                 # Estilos mínimos custom
 │       ├── api/
 │       │   └── analytics.js        # Capa fetch hacia /analytics/*
+│       ├── hooks/
+│       │   └── useJobStatus.js     # WebSocket hook: conecta a /ws/jobs, reconexión automática
 │       └── components/
-│           ├── KpiCard.jsx         # Card con número formateado
-│           ├── PlotlyChart.jsx     # Fetch + render de figura Plotly
-│           ├── StatusBadge.jsx     # Indicador verde/amarillo/rojo
-│           └── Navbar.jsx          # Barra superior con estado
+│           ├── Sidebar.jsx         # MUI Drawer — navegación principal
+│           ├── KpiCard.jsx         # MUI Card con número formateado (es-CO)
+│           ├── PlotlyChart.jsx     # Fetch + Plotly.newPlot() directo (sin react-plotly.js)
+│           └── StatusBadge.jsx     # MUI Chip: running/completed/failed
 ├── spark_jobs/
 │   └── session.py                  # SparkSession singleton (local[*] o cluster)
 ├── DataSet/DataSet/                # Datos crudos
 │   ├── Transactions/               # *_Tran.csv por sucursal
 │   └── Products/                   # Categories.csv, ProductCategory.csv
-└── data/processed/                 # Datos generados (no versionar)
-    ├── .etl_state.json             # Fingerprint del último ETL exitoso
-    ├── transactions_enriched/      # Parquet particionado por sucursal_id
-    └── kpis/                       # Cache JSON de KPIs y charts Plotly
+└── data/                           # Datos generados (no versionar)
+    ├── jobs.db                     # SQLite — historial de jobs ETL y KPIs
+    └── processed/
+        ├── .etl_state.json         # Fingerprint del último ETL exitoso
+        ├── transactions_enriched/  # Parquet particionado por sucursal_id
+        └── kpis/                   # Cache JSON de KPIs y charts Plotly
 ```
 
 ---
