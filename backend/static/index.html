@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supermercado Analytics Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background-color: #f0f2f5; font-family: 'Segoe UI', Arial, sans-serif; }
+    .kpi-card {
+      border-radius: 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      border: none;
+      transition: transform .15s;
+    }
+    .kpi-card:hover { transform: translateY(-2px); }
+    .kpi-value { font-size: 2.2rem; font-weight: 700; color: #1f77b4; }
+    .kpi-label { font-size: 0.78rem; color: #6c757d; text-transform: uppercase; letter-spacing: .05em; }
+    .chart-card { border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); border: none; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: #343a40; border-left: 4px solid #1f77b4; padding-left: 10px; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+    .dot-green  { background: #28a745; }
+    .dot-yellow { background: #ffc107; }
+    .dot-red    { background: #dc3545; }
+    #refresh-btn { position: fixed; bottom: 28px; right: 28px; z-index: 999; width: 52px; height: 52px; font-size: 1.3rem; }
+    .loading-placeholder {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; color: #adb5bd; flex-direction: column; gap: 8px;
+    }
+    .spinner-border-sm { width: 1.2rem; height: 1.2rem; }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark px-4 py-2" style="background:#1a1a2e;">
+  <span class="navbar-brand fw-bold fs-5">📊 Supermercado Analytics</span>
+  <div class="d-flex align-items-center gap-3">
+    <small id="last-updated" class="text-secondary"></small>
+    <span id="cache-badge" class="badge bg-warning text-dark">
+      <span class="status-dot dot-yellow"></span>Computando...
+    </span>
+  </div>
+</nav>
+
+<div class="container-fluid px-4 py-3">
+
+  <!-- ─── Fila 1: KPI Cards ─── -->
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+      <div class="card kpi-card p-3 text-center h-100">
+        <div class="kpi-value" id="kv-ventas">
+          <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+        </div>
+        <div class="kpi-label mt-1">Total Unidades Vendidas</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card kpi-card p-3 text-center h-100">
+        <div class="kpi-value" id="kv-transacciones">
+          <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+        </div>
+        <div class="kpi-label mt-1">Total Transacciones</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card kpi-card p-3 text-center h-100">
+        <div class="kpi-value" style="color:#2ca02c">131.186</div>
+        <div class="kpi-label mt-1">Clientes Únicos</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card kpi-card p-3 text-center h-100">
+        <div class="kpi-value" style="color:#ff7f0e">449</div>
+        <div class="kpi-label mt-1">Productos Únicos</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Resumen Ejecutivo ─── -->
+  <p class="section-title mb-3">Resumen Ejecutivo</p>
+
+  <!-- Fila 2: Serie de tiempo (full width) -->
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <div class="card chart-card p-3">
+        <div id="chart-serie-tiempo" style="min-height:450px">
+          <div class="loading-placeholder" style="height:450px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando serie de tiempo...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fila 3: Top 10 Productos | Top 10 Clientes -->
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-6">
+      <div class="card chart-card p-3">
+        <div id="chart-top10-productos" style="min-height:420px">
+          <div class="loading-placeholder" style="height:420px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando top productos...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+      <div class="card chart-card p-3">
+        <div id="chart-top10-clientes" style="min-height:420px">
+          <div class="loading-placeholder" style="height:420px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando top clientes...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fila 4: Días Pico | Categorías -->
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-lg-7">
+      <div class="card chart-card p-3">
+        <div id="chart-dias-pico" style="min-height:400px">
+          <div class="loading-placeholder" style="height:400px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando días pico...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-5">
+      <div class="card chart-card p-3">
+        <div id="chart-categorias" style="min-height:520px">
+          <div class="loading-placeholder" style="height:520px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando categorías...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Visualizaciones Analíticas ─── -->
+  <p class="section-title mb-3">Visualizaciones Analíticas</p>
+
+  <!-- Fila 5: Boxplot | Heatmap -->
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-lg-5">
+      <div class="card chart-card p-3">
+        <div id="chart-boxplot" style="min-height:450px">
+          <div class="loading-placeholder" style="height:450px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando boxplot...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-7">
+      <div class="card chart-card p-3">
+        <div id="chart-heatmap" style="min-height:480px">
+          <div class="loading-placeholder" style="height:480px">
+            <span class="spinner-border text-primary"></span>
+            <span>Cargando heatmap...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="text-center text-muted small pb-3">
+    Datos: Transacciones 2013 · 4 Sucursales · Dataset Supermercado &mdash;
+    Procesamiento distribuido con Apache Spark
+  </p>
+</div>
+
+<!-- Botón refresh flotante -->
+<button id="refresh-btn" class="btn btn-primary rounded-circle shadow" title="Actualizar dashboard">↻</button>
+
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script>
+const CHARTS = [
+  { endpoint: "serie-tiempo",    divId: "chart-serie-tiempo"    },
+  { endpoint: "top10-productos", divId: "chart-top10-productos" },
+  { endpoint: "top10-clientes",  divId: "chart-top10-clientes"  },
+  { endpoint: "dias-pico",       divId: "chart-dias-pico"       },
+  { endpoint: "categorias",      divId: "chart-categorias"      },
+  { endpoint: "boxplot",         divId: "chart-boxplot"         },
+  { endpoint: "heatmap",         divId: "chart-heatmap"         },
+];
+
+const PLOTLY_CONFIG = { responsive: true, displayModeBar: true, scrollZoom: false };
+
+function fmt(n) {
+  return (n !== null && n !== undefined)
+    ? n.toLocaleString('es-CO')
+    : '—';
+}
+
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
+}
+
+async function updateStatus() {
+  const st = await fetchJSON('/analytics/status');
+  const badge = document.getElementById('cache-badge');
+  if (!st) {
+    badge.className = 'badge bg-danger';
+    badge.innerHTML = '<span class="status-dot dot-red"></span>Sin conexión';
+    return false;
+  }
+  if (st.cache_warm) {
+    badge.className = 'badge bg-success';
+    badge.innerHTML = '<span class="status-dot dot-green"></span>Cache actualizado';
+    document.getElementById('last-updated').textContent =
+      'Actualizado: ' + new Date().toLocaleTimeString('es-CO');
+    return true;
+  } else {
+    badge.className = 'badge bg-warning text-dark';
+    badge.innerHTML = '<span class="status-dot dot-yellow"></span>Computando KPIs...';
+    return false;
+  }
+}
+
+async function loadKPICards() {
+  const [ventas, tx] = await Promise.all([
+    fetchJSON('/analytics/kpis/total-ventas'),
+    fetchJSON('/analytics/kpis/total-transacciones'),
+  ]);
+  if (ventas) document.getElementById('kv-ventas').textContent = fmt(ventas.value);
+  if (tx)     document.getElementById('kv-transacciones').textContent = fmt(tx.value);
+}
+
+function showError(divId, msg) {
+  const el = document.getElementById(divId);
+  el.innerHTML = `<div class="loading-placeholder" style="height:100%;min-height:200px">
+    <span class="text-muted">⏳ ${msg}</span>
+  </div>`;
+}
+
+async function loadChart(endpoint, divId) {
+  const data = await fetchJSON('/analytics/charts/' + endpoint);
+  if (!data) {
+    showError(divId, 'Datos no disponibles aún. El cómputo puede tardar ~5 minutos.');
+    return false;
+  }
+  // data puede ser el JSON string de Plotly o un objeto ya parseado
+  let fig;
+  try {
+    fig = typeof data === 'string' ? JSON.parse(data) : data;
+  } catch {
+    showError(divId, 'Error al procesar el chart.');
+    return false;
+  }
+  document.getElementById(divId).innerHTML = '';
+  Plotly.newPlot(divId, fig.data, fig.layout, PLOTLY_CONFIG);
+  return true;
+}
+
+async function loadAll() {
+  const warm = await updateStatus();
+  if (warm) {
+    await loadKPICards();
+  }
+  // Intentar cargar cada chart independientemente (pueden fallar con 503)
+  await Promise.all(CHARTS.map(c => loadChart(c.endpoint, c.divId)));
+}
+
+// Auto-refresh si el cache no está warm
+let _retryCount = 0;
+async function autoRefresh() {
+  const warm = await updateStatus();
+  if (!warm && _retryCount < 30) {   // máximo ~7.5 min de reintentos
+    _retryCount++;
+    setTimeout(async () => { await loadAll(); await autoRefresh(); }, 15000);
+  } else if (warm) {
+    _retryCount = 0;
+  }
+}
+
+document.getElementById('refresh-btn').addEventListener('click', async () => {
+  _retryCount = 0;
+  await loadAll();
+});
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadAll();
+  await autoRefresh();
+});
+</script>
+</body>
+</html>

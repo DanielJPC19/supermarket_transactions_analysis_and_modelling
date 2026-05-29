@@ -5,3 +5,5 @@ python-dotenv==1.2.2
 
 fastapi
 uvicorn[standard]
+plotly==5.24.1
+pandas==3.0.3
