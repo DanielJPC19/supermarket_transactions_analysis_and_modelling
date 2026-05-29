@@ -4,3 +4,6 @@
 **/*.pyc
 **/*.pyo
 **/*.pyd
+
+data/processed/transactions_enriched/**
+data/processed/transactions_enriched

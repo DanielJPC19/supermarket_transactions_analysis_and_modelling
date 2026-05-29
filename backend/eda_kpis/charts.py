@@ -80,30 +80,33 @@ def chart_dias_pico(data: list[dict]) -> str:
 
 
 def chart_categorias(data: list[dict]) -> str:
-    nombres = [d["nombre_categoria"] for d in data]
-    totales = [d["total_cantidad"] for d in data]
-    pcts    = [d["pct"] for d in data]
+    # Categorías con pct < 3 % se agrupan como "Otros" para reducir ruido visual
+    THRESHOLD = 3.0
+    main = [d for d in data if d["pct"] >= THRESHOLD]
+    otros_total = sum(d["total_cantidad"] for d in data if d["pct"] < THRESHOLD)
+    otros_pct = round(sum(d["pct"] for d in data if d["pct"] < THRESHOLD), 2)
+    if otros_total > 0:
+        main.append({"nombre_categoria": "Otros", "total_cantidad": otros_total, "pct": otros_pct})
 
-    fig = make_subplots(
-        rows=1, cols=2,
-        specs=[[{"type": "pie"}, {"type": "bar"}]],
-        subplot_titles=("Distribución relativa (%)", "Volumen absoluto (unidades)"),
-    )
-    fig.add_trace(go.Pie(
-        labels=nombres, values=pcts, hole=0.35,
-        textinfo="label+percent",
-        hovertemplate="<b>%{label}</b><br>%{percent}<extra></extra>",
-    ), row=1, col=1)
-    fig.add_trace(go.Bar(
+    # Orden ascendente para que la barra más grande quede arriba
+    main_sorted = sorted(main, key=lambda d: d["total_cantidad"])
+    nombres = [d["nombre_categoria"] for d in main_sorted]
+    totales = [d["total_cantidad"] for d in main_sorted]
+    pcts    = [d["pct"] for d in main_sorted]
+
+    fig = go.Figure(go.Bar(
         x=totales, y=nombres, orientation="h",
-        marker_color=PALETTE[:len(nombres)],
-        hovertemplate="<b>%{y}</b><br>%{x:,} unidades<extra></extra>",
-    ), row=1, col=2)
+        marker_color=PALETTE[:len(main_sorted)],
+        text=[f"{p:.1f}%" for p in pcts],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>%{x:,} unidades · %{text}<extra></extra>",
+    ))
     fig.update_layout(
         **_LAYOUT,
         title=dict(text="Categorías más Rentables por Volumen", x=0.5),
+        xaxis_title="Total unidades vendidas",
         showlegend=False,
-        height=520,
+        height=480,
     )
     return fig.to_json()
 

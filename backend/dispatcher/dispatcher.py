@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from typing import Any
 
 from backend.config import (
     TRANSACTIONS_DIR,
@@ -22,10 +23,6 @@ _STATE_FILE = PROCESSED_DIR / ".etl_state.json"
 
 
 def _compute_fingerprint() -> str:
-    """
-    Fingerprint del directorio Transactions/ basado en nombre + tamaño + mtime.
-    O(n_files), no lee el contenido de los CSVs.
-    """
     entries = [
         {"name": f.name, "size": f.stat().st_size, "mtime": f.stat().st_mtime}
         for f in sorted(TRANSACTIONS_DIR.glob("*_Tran.csv"))
@@ -48,7 +45,6 @@ def _save_fingerprint(fp: str) -> None:
 
 
 def etl_needed() -> bool:
-    """True si ETL_FORCE_RERUN=true, output no existe, o hay archivos nuevos/modificados."""
     if ETL_FORCE_RERUN:
         logger.info("ETL_FORCE_RERUN=true → ejecutando ETL")
         return True
@@ -62,32 +58,46 @@ def etl_needed() -> bool:
     return False
 
 
-def run_etl() -> None:
-    """
-    Pipeline ETL completo: read → transform → write.
-    Bloquea hasta completar. Llamar con asyncio.to_thread desde FastAPI.
-    """
+def run_etl(loop: asyncio.AbstractEventLoop | None = None) -> None:
+    from backend.websocket import manager as ws_manager, db as ws_db
+
     logger.info("Iniciando ETL pipeline")
-    fp = _compute_fingerprint()
-    spark = get_spark_session(SPARK_MASTER_URL, SPARK_APP_NAME)
+    job_id = ws_db.insert_job("ETL")
 
-    df_tx = read_transactions(spark)
-    df_pc = read_product_category(spark)
-    df_cat = read_categories(spark)
+    def _broadcast(data: dict) -> None:
+        if loop is not None:
+            asyncio.run_coroutine_threadsafe(ws_manager.broadcast(data), loop)
 
-    df_enriched = run_transformations(df_tx, df_pc, df_cat)
-    write_transactions_enriched(df_enriched)
+    _broadcast({"type": "ETL", "status": "running", "job_id": job_id})
 
-    # Invalidar cache KPIs para forzar recomputo con los nuevos datos
-    from backend.eda_kpis.cache import invalidate_all as _invalidate_kpis
-    _invalidate_kpis()
+    try:
+        fp = _compute_fingerprint()
+        spark = get_spark_session(SPARK_MASTER_URL, SPARK_APP_NAME)
 
-    _save_fingerprint(fp)
-    logger.info("ETL pipeline completado exitosamente")
+        df_tx = read_transactions(spark)
+        df_pc = read_product_category(spark)
+        df_cat = read_categories(spark)
+
+        df_enriched = run_transformations(df_tx, df_pc, df_cat)
+        write_transactions_enriched(df_enriched)
+
+        from backend.eda_kpis.cache import invalidate_all as _invalidate_kpis
+        _invalidate_kpis()
+
+        _save_fingerprint(fp)
+        ws_db.update_job(job_id, "completed")
+        _broadcast({"type": "ETL", "status": "completed", "job_id": job_id})
+        logger.info("ETL pipeline completado exitosamente")
+
+    except Exception as exc:
+        ws_db.update_job(job_id, "failed", str(exc))
+        _broadcast({"type": "ETL", "status": "failed", "job_id": job_id, "message": str(exc)})
+        logger.error("ETL pipeline falló: %s", exc, exc_info=True)
+        raise
 
 
-async def run_etl_async() -> None:
-    """Wrapper async: ejecuta ETL y luego lanza recomputo de KPIs en background."""
-    await asyncio.to_thread(run_etl)
+async def run_etl_async(loop: asyncio.AbstractEventLoop | None = None) -> None:
+    _loop = loop or asyncio.get_event_loop()
+    await asyncio.to_thread(run_etl, _loop)
     from backend.eda_kpis.router import run_kpis_sync
-    asyncio.create_task(asyncio.to_thread(run_kpis_sync))
+    asyncio.create_task(asyncio.to_thread(run_kpis_sync, _loop))

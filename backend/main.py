@@ -1,17 +1,19 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.dispatcher.dispatcher import etl_needed, run_etl_async
 from backend.dispatcher.watcher import watch_and_rerun_etl
 from backend.eda_kpis import cache
 from backend.eda_kpis.router import router as analytics_router, run_kpis_sync
 from backend.etl.writer import output_exists
-from backend.config import TRANSACTIONS_ENRICHED_DIR, STATIC_DIR
+from backend.config import TRANSACTIONS_ENRICHED_DIR
+from backend.websocket import manager, db
 from spark_jobs.session import stop_spark_session
 
 logging.basicConfig(
@@ -28,6 +30,7 @@ async def lifespan(app: FastAPI):
     global _watcher_task
 
     # ── STARTUP ──────────────────────────────────────────────────────────
+    db.init_db()
     logger.info("Startup: verificando estado ETL")
     if etl_needed():
         logger.info("Ejecutando ETL inicial")
@@ -36,10 +39,10 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.error("ETL inicial falló: %s", exc, exc_info=True)
 
-    # Lanzar cómputo de KPIs en background si el cache no está warm
     if not cache.all_kpis_cached():
         logger.info("Cache KPIs no warm → lanzando cómputo en background")
-        asyncio.create_task(asyncio.to_thread(run_kpis_sync))
+        loop = asyncio.get_event_loop()
+        asyncio.create_task(asyncio.to_thread(run_kpis_sync, loop))
     else:
         logger.info("Cache KPIs ya warm")
 
@@ -66,9 +69,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Routers y rutas estáticas ─────────────────────────────────────────────────
-# ORDEN CRÍTICO: include_router ANTES de app.mount("/", StaticFiles(...))
-# De lo contrario StaticFiles captura todas las rutas incluyendo /analytics/*
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(analytics_router)
 
@@ -88,11 +94,18 @@ async def etl_status():
 
 @app.post("/etl/trigger")
 async def trigger_etl():
-    """Fuerza re-ejecución del ETL en background."""
-    asyncio.create_task(run_etl_async())
+    loop = asyncio.get_event_loop()
+    asyncio.create_task(run_etl_async(loop))
     return {"status": "ETL job iniciado en background"}
 
 
-# Servir el dashboard SPA (debe ir al final)
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+@app.websocket("/ws/jobs")
+async def ws_jobs(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        # Enviar historial reciente al conectar
+        await websocket.send_text(json.dumps(db.get_recent_jobs()))
+        while True:
+            await websocket.receive_text()  # mantiene viva la conexión
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)

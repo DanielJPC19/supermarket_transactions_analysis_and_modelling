@@ -97,28 +97,61 @@ Las dependencias principales son:
 
 ### 4. Configurar variables de entorno
 
-Crear el archivo `.env` en la raíz del proyecto (ya incluido en el repo):
+El proyecto usa **dos archivos `.env` independientes**: uno para el backend y otro para el frontend.
+
+#### `.env` — Backend (raíz del proyecto)
+
+Leído por `backend/config.py` vía `python-dotenv`. Agrupa las variables en tres secciones:
 
 ```ini
-# Spark — cambiar SPARK_MASTER_URL para deployment con cluster real
-SPARK_MASTER_URL=local[*]          # local[*] usa todos los cores de la máquina
+# ── Spark ────────────────────────────────────────────────────────────────────
+SPARK_MASTER_URL=local[*]     # local[*] = todos los cores; spark://host:7077 para cluster
 SPARK_APP_NAME=SupermercadoETL
 
-# Rutas del dataset crudo (relativas a la raíz del proyecto)
+# ── Rutas del dataset crudo (relativas a la raíz del proyecto) ───────────────
 DATASET_DIR=DataSet/DataSet
 TRANSACTIONS_SUBDIR=Transactions
 PRODUCTS_SUBDIR=Products
 
-# Directorio de datos procesados (simula el Bucket de Datos)
+# ── Almacenamiento procesado + comportamiento ETL + API ──────────────────────
 PROCESSED_DIR=data/processed
-
-# ETL: true fuerza re-ejecución aunque los datos procesados ya existan
-ETL_FORCE_RERUN=false
-
-# API
+ETL_FORCE_RERUN=false         # true = fuerza re-ejecución aunque el output ya exista
 API_HOST=0.0.0.0
 API_PORT=8000
 ```
+
+| Variable | Descripción | Valor por defecto |
+|----------|-------------|-------------------|
+| `SPARK_MASTER_URL` | Modo de ejecución Spark | `local[*]` |
+| `SPARK_APP_NAME` | Nombre de la aplicación Spark | `SupermercadoETL` |
+| `DATASET_DIR` | Ruta al directorio del dataset crudo | `DataSet/DataSet` |
+| `TRANSACTIONS_SUBDIR` | Subdirectorio con los CSV de transacciones | `Transactions` |
+| `PRODUCTS_SUBDIR` | Subdirectorio con los CSV de productos | `Products` |
+| `PROCESSED_DIR` | Directorio de datos procesados (Parquet + cache KPIs) | `data/processed` |
+| `ETL_FORCE_RERUN` | Forzar re-ejecución del ETL en cada arranque | `false` |
+| `API_HOST` | Host donde escucha Uvicorn | `0.0.0.0` |
+| `API_PORT` | Puerto de la API | `8000` |
+
+#### `frontend/.env` — Frontend (directorio `frontend/`)
+
+Leído por **Vite** durante el build y en desarrollo. Solo las variables con prefijo `VITE_` quedan expuestas en el bundle del navegador.
+
+```ini
+# ── Conexión con el backend ───────────────────────────────────────────────────
+VITE_API_URL=http://localhost:8000
+
+# ── Comportamiento del dashboard ─────────────────────────────────────────────
+VITE_POLL_INTERVAL_MS=15000   # ms entre reintentos mientras el cache no está warm
+VITE_MAX_RETRIES=30           # máximo de reintentos automáticos (~7.5 min)
+```
+
+| Variable | Descripción | Valor por defecto |
+|----------|-------------|-------------------|
+| `VITE_API_URL` | URL base del backend FastAPI | `http://localhost:8000` |
+| `VITE_POLL_INTERVAL_MS` | Intervalo de polling de estado (ms) | `15000` |
+| `VITE_MAX_RETRIES` | Reintentos máximos antes de detener el polling | `30` |
+
+> **Deployment:** Para apuntar el frontend a un backend en otro servidor, cambiar `VITE_API_URL` y reconstruir con `npm run build`. Las variables `VITE_*` se embeben en el bundle estático en tiempo de build.
 
 ### 5. Ubicar el dataset
 
@@ -148,9 +181,9 @@ fecha|sucursal_id|cliente_id|lista_de_producto_ids_separados_por_espacio
 
 ## Ejecución
 
-### Arrancar el sistema completo (recomendado)
+El sistema tiene dos procesos independientes que deben correr en paralelo: el **backend** (FastAPI + PySpark) y el **frontend** (React + Vite).
 
-Todo el sistema —ETL, cómputo de KPIs y dashboard— se activa con un único comando:
+### Terminal 1 — Backend (API + procesamiento)
 
 ```bash
 source .venv/bin/activate
@@ -163,9 +196,32 @@ Al arrancar, el servidor ejecuta automáticamente los siguientes pasos en orden:
 2. **ETL (si es necesario)** — lee los CSV crudos, transforma y enriquece los datos con PySpark, y guarda el resultado como Parquet en `data/processed/transactions_enriched/` particionado por `sucursal_id`.
 3. **Cómputo de KPIs** — si el cache de KPIs no está disponible, lanza en background el cómputo de los 9 indicadores y charts con PySpark (~3–8 minutos en local). Los resultados se guardan en `data/processed/kpis/`.
 4. **Watcher de archivos** — inicia un proceso en background que monitorea `DataSet/DataSet/Transactions/`. Si detecta un nuevo archivo `*_Tran.csv`, re-ejecuta el ETL y el cómputo de KPIs automáticamente.
-5. **Dashboard disponible** — una vez arrancado, el dashboard es accesible en `http://localhost:8000`.
 
 > **Nota sobre tiempos:** El ETL sobre 1.1 millones de transacciones tarda ~2–4 minutos en `local[*]`. El cómputo de KPIs sobre los ~10.5 millones de filas enriquecidas tarda ~3–8 minutos adicionales. En ejecuciones posteriores, ambos pasos se omiten si los datos no cambiaron.
+
+### Terminal 2 — Frontend (React)
+
+```bash
+cd frontend
+npm install      # solo la primera vez
+npm run dev
+```
+
+El dashboard estará disponible en **`http://localhost:5173`**.
+
+> La app React se conecta automáticamente a `http://localhost:8000`. Si el backend está en otro host/puerto, editar `frontend/.env`:
+> ```ini
+> VITE_API_URL=http://mi-servidor:8000
+> ```
+
+### Build de producción del frontend
+
+```bash
+cd frontend
+npm run build    # genera frontend/dist/
+```
+
+Los archivos en `dist/` pueden servirse desde cualquier servidor estático (Nginx, S3, etc.).
 
 ---
 
@@ -246,10 +302,10 @@ Cada endpoint retorna un objeto JSON de figura Plotly listo para renderizar con 
 
 ```
 proyecto/
-├── .env                            # Variables de entorno (configuración)
+├── .env                            # Variables de entorno backend (Spark, paths, API)
 ├── requirements.txt                # Dependencias Python
 ├── backend/                        # Monolito modular — FastAPI
-│   ├── main.py                     # Entry point: lifespan, rutas, montaje static
+│   ├── main.py                     # Entry point: lifespan, CORS, rutas API
 │   ├── config.py                   # Constantes centralizadas (paths, env vars)
 │   ├── etl/                        # Módulo ETL
 │   │   ├── reader.py               # Lee CSV crudos con schema explícito
@@ -263,9 +319,22 @@ proyecto/
 │   │   ├── charts.py               # 7 figuras Plotly (fig.to_json())
 │   │   ├── cache.py                # Lectura/escritura JSON en disco
 │   │   └── router.py               # APIRouter /analytics/* + run_kpis_sync()
-│   ├── websocket/                  # Módulo WebSocket Manager (en desarrollo)
-│   └── static/
-│       └── index.html              # Dashboard SPA (Bootstrap 5 + Plotly.js CDN)
+│   └── websocket/                  # Módulo WebSocket Manager (en desarrollo)
+├── frontend/                       # App React — dashboard independiente
+│   ├── .env                        # VITE_API_URL=http://localhost:8000
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── main.jsx                # Entry React
+│       ├── App.jsx                 # Layout principal + polling de estado
+│       ├── App.css                 # Estilos del dashboard
+│       ├── api/
+│       │   └── analytics.js        # Capa fetch hacia /analytics/*
+│       └── components/
+│           ├── KpiCard.jsx         # Card con número formateado
+│           ├── PlotlyChart.jsx     # Fetch + render de figura Plotly
+│           ├── StatusBadge.jsx     # Indicador verde/amarillo/rojo
+│           └── Navbar.jsx          # Barra superior con estado
 ├── spark_jobs/
 │   └── session.py                  # SparkSession singleton (local[*] o cluster)
 ├── DataSet/DataSet/                # Datos crudos

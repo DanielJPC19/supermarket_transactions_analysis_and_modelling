@@ -31,7 +31,9 @@ API_PORT: int = int(os.getenv("API_PORT", "8000"))
 
 # ── KPIs Cache ───────────────────────────────────────────────────────────────
 KPIS_CACHE_DIR: Path = PROCESSED_DIR / "kpis"
-STATIC_DIR: Path = PROJECT_ROOT / "backend" / "static"
+
+# ── Jobs DB (estado de jobs ETL/KPIs — separado del bucket de datos) ─────────
+JOBS_DB_PATH: Path = PROJECT_ROOT / "data" / "jobs.db"
 
 KPI_TOTAL_VENTAS        = "total_ventas.json"
 KPI_TOTAL_TRANSACCIONES = "total_transacciones.json"

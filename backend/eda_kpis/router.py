@@ -42,29 +42,42 @@ def _require_cached(filename: str) -> Any:
     return data
 
 
-def run_kpis_sync() -> None:
-    """
-    Orquesta cómputo completo de KPIs y charts. Llamar desde asyncio.to_thread.
-    Persiste todos los resultados en cache de disco.
-    """
+def run_kpis_sync(loop: asyncio.AbstractEventLoop | None = None) -> None:
+    from backend.websocket import manager as ws_manager, db as ws_db
+
     logger.info("Iniciando cómputo de KPIs y charts")
-    spark = get_spark_session(SPARK_MASTER_URL, SPARK_APP_NAME)
-    results = computer.compute_all_kpis(spark)
+    job_id = ws_db.insert_job("KPIs")
 
-    # KPIs numéricos / listas
-    cache.save(KPI_TOTAL_VENTAS,        results["total_ventas"])
-    cache.save(KPI_TOTAL_TRANSACCIONES, results["total_transacciones"])
-    cache.save(KPI_TOP10_PRODUCTOS,     results["top10_productos"])
-    cache.save(KPI_TOP10_CLIENTES,      results["top10_clientes"])
-    cache.save(KPI_DIAS_PICO,           results["dias_pico"])
-    cache.save(KPI_CATEGORIAS,          results["categorias"])
+    def _broadcast(data: dict) -> None:
+        if loop is not None:
+            asyncio.run_coroutine_threadsafe(ws_manager.broadcast(data), loop)
 
-    # Charts analíticos complejos (Plotly JSON strings)
-    cache.save(CHART_SERIE_TIEMPO, charts.chart_serie_tiempo(results["serie_tiempo"]))
-    cache.save(CHART_BOXPLOT,      charts.chart_boxplot(results["boxplot_data"]))
-    cache.save(CHART_HEATMAP,      charts.chart_heatmap(results["heatmap_data"]))
+    _broadcast({"type": "KPIs", "status": "running", "job_id": job_id})
 
-    logger.info("KPIs y charts persistidos en cache correctamente")
+    try:
+        spark = get_spark_session(SPARK_MASTER_URL, SPARK_APP_NAME)
+        results = computer.compute_all_kpis(spark)
+
+        cache.save(KPI_TOTAL_VENTAS,        results["total_ventas"])
+        cache.save(KPI_TOTAL_TRANSACCIONES, results["total_transacciones"])
+        cache.save(KPI_TOP10_PRODUCTOS,     results["top10_productos"])
+        cache.save(KPI_TOP10_CLIENTES,      results["top10_clientes"])
+        cache.save(KPI_DIAS_PICO,           results["dias_pico"])
+        cache.save(KPI_CATEGORIAS,          results["categorias"])
+
+        cache.save(CHART_SERIE_TIEMPO, charts.chart_serie_tiempo(results["serie_tiempo"]))
+        cache.save(CHART_BOXPLOT,      charts.chart_boxplot(results["boxplot_data"]))
+        cache.save(CHART_HEATMAP,      charts.chart_heatmap(results["heatmap_data"]))
+
+        ws_db.update_job(job_id, "completed")
+        _broadcast({"type": "KPIs", "status": "completed", "job_id": job_id})
+        logger.info("KPIs y charts persistidos en cache correctamente")
+
+    except Exception as exc:
+        ws_db.update_job(job_id, "failed", str(exc))
+        _broadcast({"type": "KPIs", "status": "failed", "job_id": job_id, "message": str(exc)})
+        logger.error("Cómputo de KPIs falló: %s", exc, exc_info=True)
+        raise
 
 
 # ── Status ────────────────────────────────────────────────────────────────────
@@ -118,13 +131,11 @@ async def get_chart(chart_name: str):
 
     mode, cache_key, chart_fn = _CHART_CACHE_KEYS[chart_name]
 
-    # Intentar servir desde cache
     raw = cache.load(cache_key if mode == "direct" else f"chart_{chart_name}.json")
     if raw is not None:
         content = raw if isinstance(raw, str) else __import__("json").dumps(raw)
         return Response(content=content, media_type="application/json")
 
-    # Para charts derivados de KPI data: generar on-demand y cachear
     if mode == "kpi":
         data = cache.load(cache_key)
         if data is None:
@@ -140,6 +151,6 @@ async def get_chart(chart_name: str):
 
 @router.post("/compute")
 async def trigger_compute():
-    """Fuerza recomputo de todos los KPIs en background."""
-    asyncio.create_task(asyncio.to_thread(run_kpis_sync))
+    loop = asyncio.get_event_loop()
+    asyncio.create_task(asyncio.to_thread(run_kpis_sync, loop))
     return {"status": "Cómputo de KPIs iniciado en background"}
