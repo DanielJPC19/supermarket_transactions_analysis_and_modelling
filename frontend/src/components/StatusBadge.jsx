@@ -2,9 +2,10 @@ import { Chip } from '@mui/material';
 import CircleIcon from '@mui/icons-material/Circle';
 
 const STATUS_MAP = {
-  running:   { label: 'Ejecutando...', color: 'warning' },
-  completed: { label: 'Completado',    color: 'success' },
-  failed:    { label: 'Error',         color: 'error'   },
+  running:     { label: 'Ejecutando...', color: 'warning' },
+  completed:   { label: 'Completado',    color: 'success' },
+  failed:      { label: 'Error',         color: 'error'   },
+  rolled_back: { label: 'Rollback',      color: 'info'    },
 };
 
 export default function StatusBadge({ status, size = 'small' }) {

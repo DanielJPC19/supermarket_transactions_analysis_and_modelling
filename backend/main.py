@@ -4,15 +4,16 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.dispatcher.dispatcher import etl_needed, run_etl_async
 from backend.dispatcher.watcher import watch_and_rerun_etl
 from backend.eda_kpis import cache
 from backend.eda_kpis.router import router as analytics_router, run_kpis_sync
+from backend.kmeans.router import router as kmeans_router
 from backend.etl.writer import output_exists
-from backend.config import TRANSACTIONS_ENRICHED_DIR
+from backend.config import TRANSACTIONS_ENRICHED_DIR, TRANSACTIONS_ENRICHED_BACKUP_DIR
 from backend.websocket import manager, db
 from spark_jobs.session import stop_spark_session
 
@@ -77,6 +78,7 @@ app.add_middleware(
 )
 
 app.include_router(analytics_router)
+app.include_router(kmeans_router)
 
 
 @app.get("/health")
@@ -89,7 +91,27 @@ async def etl_status():
     return {
         "processed_data_available": output_exists(),
         "output_path": str(TRANSACTIONS_ENRICHED_DIR),
+        "rollback_available": TRANSACTIONS_ENRICHED_BACKUP_DIR.exists(),
     }
+
+
+@app.post("/etl/rollback")
+async def trigger_rollback():
+    from backend.dispatcher.dispatcher import rollback_enriched
+    from backend.eda_kpis.cache import invalidate_all as invalidate_kpis_cache
+    from backend.eda_kpis.router import run_kpis_sync
+
+    if not TRANSACTIONS_ENRICHED_BACKUP_DIR.exists():
+        raise HTTPException(409, "No hay backup disponible para rollback")
+
+    job_id = db.insert_job("ETL")
+    rollback_enriched()
+    invalidate_kpis_cache()
+    db.update_job(job_id, "rolled_back")
+    await manager.broadcast({"type": "ETL", "status": "rolled_back", "job_id": job_id})
+    loop = asyncio.get_event_loop()
+    asyncio.create_task(asyncio.to_thread(run_kpis_sync, loop))
+    return {"status": "Rollback completado. KPIs se recomputarán en background."}
 
 
 @app.post("/etl/trigger")

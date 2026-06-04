@@ -3,13 +3,16 @@ import {
   Box, Button, Container, createTheme, CssBaseline, Grid, ThemeProvider, Typography,
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import HistoryIcon from '@mui/icons-material/History';
 import './App.css';
 
 import Sidebar, { DRAWER_WIDTH } from './components/Sidebar';
+import StatusBadge from './components/StatusBadge';
 import KpiCard from './components/KpiCard';
 import PlotlyChart from './components/PlotlyChart';
+import KmeansSection from './components/KmeansSection';
 import { useJobStatus } from './hooks/useJobStatus';
-import { fetchStatus, fetchKpiVentas, fetchKpiTransacciones } from './api/analytics';
+import { fetchStatus, fetchKpiVentas, fetchKpiTransacciones, fetchEtlStatus, triggerRollback } from './api/analytics';
 
 const POLL_INTERVAL = Number(import.meta.env.VITE_POLL_INTERVAL_MS) || 15000;
 const MAX_RETRIES   = Number(import.meta.env.VITE_MAX_RETRIES)       || 30;
@@ -40,44 +43,62 @@ function SectionTitle({ children }) {
   );
 }
 
-function StatusCard({ title, job }) {
-  const Row = ({ label, value }) => (
-    <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.6 }}>
-      <Typography variant="body2" color="text.secondary">{label}</Typography>
-      <Typography variant="body2" fontWeight={500}>{value ?? '—'}</Typography>
-    </Box>
-  );
+function InfoRow({ label, value }) {
   return (
-    <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, p: 2.5, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', height: '100%' }}>
-      <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5, color: 'text.primary' }}>
-        {title}
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', py: 0.5 }}>
+      <Typography variant="body2" color="text.secondary">{label}</Typography>
+      <Typography variant="body2" fontWeight={500} sx={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
+        {value ?? '—'}
       </Typography>
-      <Row label="Estado" value={job?.status ?? 'Sin datos'} />
-      <Row label="Inicio" value={job?.started_at ? new Date(job.started_at).toLocaleString('es-CO') : null} />
-      <Row label="Fin"    value={job?.finished_at ? new Date(job.finished_at).toLocaleString('es-CO') : null} />
-      {job?.message && <Row label="Mensaje" value={job.message} />}
     </Box>
   );
 }
 
-function EtlPanel({ jobStatus, onTriggerEtl }) {
-  const etlRunning = jobStatus?.ETL?.status === 'running';
+function StatusCard({ title, job, lastSuccessful }) {
+  const fmt = (ts) => ts ? new Date(ts).toLocaleString('es-CO') : null;
   return (
-    <Box sx={{ maxWidth: 860, mx: 'auto' }}>
+    <Box sx={{ bgcolor: 'background.paper', borderRadius: 2, p: 2, boxShadow: '0 1px 4px rgba(0,0,0,0.08)', height: '100%' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+        <Typography variant="subtitle2" fontWeight={700}>{title}</Typography>
+        <StatusBadge status={job?.status ?? null} />
+      </Box>
+      <InfoRow label="Inicio"       value={fmt(job?.started_at)} />
+      <InfoRow label="Fin"          value={fmt(job?.finished_at)} />
+      <InfoRow label="Último éxito" value={fmt(lastSuccessful?.finished_at)} />
+      {job?.message && <InfoRow label="Error" value={job.message.slice(0, 120)} />}
+    </Box>
+  );
+}
+
+function EtlPanel({ jobStatus, lastSuccessful, onTriggerEtl, rollbackAvailable, onTriggerRollback }) {
+  const etlRunning = jobStatus?.ETL?.status === 'running';
+
+  const CARDS = [
+    { key: 'ETL',          title: 'Estado del ETL'        },
+    { key: 'KPIs',         title: 'Estado de KPIs'        },
+    { key: 'KMeans',       title: 'Estado de K-Means'     },
+    { key: 'Recomendador', title: 'Estado del Recomendador' },
+  ];
+
+  return (
+    <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
       <Typography variant="h5" fontWeight={700} sx={{ mb: 3 }}>
-        Gestión del ETL
+        Gestión del Pipeline
       </Typography>
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <StatusCard title="Estado del ETL" job={jobStatus?.ETL} />
-        </Grid>
-        <Grid size={{ xs: 12, md: 6 }}>
-          <StatusCard title="Estado del cómputo de KPIs" job={jobStatus?.KPIs} />
-        </Grid>
+        {CARDS.map(({ key, title }) => (
+          <Grid key={key} size={{ xs: 12, sm: 6, lg: 3 }}>
+            <StatusCard
+              title={title}
+              job={jobStatus?.[key]}
+              lastSuccessful={lastSuccessful?.[key]}
+            />
+          </Grid>
+        ))}
       </Grid>
 
-      <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, flexWrap: 'wrap' }}>
         <Button
           variant="contained"
           startIcon={<PlayArrowIcon />}
@@ -88,7 +109,24 @@ function EtlPanel({ jobStatus, onTriggerEtl }) {
         >
           {etlRunning ? 'Ejecutando...' : 'Ejecutar ETL'}
         </Button>
+        {rollbackAvailable && !etlRunning && (
+          <Button
+            variant="outlined"
+            color="warning"
+            startIcon={<HistoryIcon />}
+            onClick={onTriggerRollback}
+            size="large"
+            sx={{ px: 3, borderRadius: 2 }}
+          >
+            Rollback a versión anterior
+          </Button>
+        )}
       </Box>
+      {rollbackAvailable && (
+        <Typography variant="caption" color="text.secondary" display="block" align="center" sx={{ mt: 1 }}>
+          Hay una versión anterior de los datos disponible para restaurar.
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -171,14 +209,15 @@ function DashboardContent({ refreshKey, kpiVentas, kpiTx }) {
 }
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState('eda');
-  const [cacheWarm, setCacheWarm]         = useState(false);
-  const [kpiVentas, setKpiVentas]         = useState(null);
-  const [kpiTx, setKpiTx]                 = useState(null);
-  const [refreshKey, setRefreshKey]       = useState(0);
+  const [activeSection,     setActiveSection]     = useState('eda');
+  const [cacheWarm,         setCacheWarm]          = useState(false);
+  const [kpiVentas,         setKpiVentas]          = useState(null);
+  const [kpiTx,             setKpiTx]              = useState(null);
+  const [refreshKey,        setRefreshKey]         = useState(0);
+  const [rollbackAvailable, setRollbackAvailable]  = useState(false);
   const retryCount  = useRef(0);
   const timeoutRef  = useRef(null);
-  const jobStatus   = useJobStatus();
+  const { jobStatus, lastSuccessful } = useJobStatus();
 
   const loadKpis = useCallback(async () => {
     const [v, tx] = await Promise.all([fetchKpiVentas(), fetchKpiTransacciones()]);
@@ -206,8 +245,18 @@ export default function App() {
     }
   }, [checkStatus]);
 
+  const checkRollback = useCallback(async () => {
+    const st = await fetchEtlStatus();
+    if (st) setRollbackAvailable(st.rollback_available ?? false);
+  }, []);
+
   const handleTriggerEtl = useCallback(async () => {
     await fetch(`${API_BASE}/etl/trigger`, { method: 'POST' });
+  }, []);
+
+  const handleTriggerRollback = useCallback(async () => {
+    await triggerRollback();
+    setRollbackAvailable(false);
   }, []);
 
   const handleRefresh = useCallback(async () => {
@@ -220,6 +269,7 @@ export default function App() {
 
   useEffect(() => {
     poll();
+    checkRollback();
     return () => clearTimeout(timeoutRef.current);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -229,6 +279,14 @@ export default function App() {
       checkStatus().then((warm) => { if (warm) setRefreshKey((k) => k + 1); });
     }
   }, [jobStatus?.KPIs?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Actualizar disponibilidad de rollback cuando el ETL cambia de estado
+  useEffect(() => {
+    const st = jobStatus?.ETL?.status;
+    if (st === 'completed' || st === 'failed' || st === 'rolled_back') {
+      checkRollback();
+    }
+  }, [jobStatus?.ETL?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ThemeProvider theme={theme}>
@@ -252,7 +310,16 @@ export default function App() {
             />
           )}
           {activeSection === 'etl' && (
-            <EtlPanel jobStatus={jobStatus} onTriggerEtl={handleTriggerEtl} />
+            <EtlPanel
+              jobStatus={jobStatus}
+              lastSuccessful={lastSuccessful}
+              onTriggerEtl={handleTriggerEtl}
+              rollbackAvailable={rollbackAvailable}
+              onTriggerRollback={handleTriggerRollback}
+            />
+          )}
+          {activeSection === 'kmeans' && (
+            <KmeansSection jobStatus={jobStatus} />
           )}
         </Box>
       </Box>

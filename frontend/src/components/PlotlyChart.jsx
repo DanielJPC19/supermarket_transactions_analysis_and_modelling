@@ -4,16 +4,18 @@ import { fetchChart } from '../api/analytics';
 
 const PLOTLY_CONFIG = { responsive: true, displayModeBar: true, scrollZoom: false };
 
-export default function PlotlyChart({ chartName, minHeight = 400, refreshKey }) {
+export default function PlotlyChart({ chartName, minHeight = 400, refreshKey, fetchFn }) {
   const divRef = useRef(null);
   const [fig, setFig] = useState(null);
   const [status, setStatus] = useState('loading');
+
+  const _fetch = fetchFn ?? fetchChart;
 
   useEffect(() => {
     let cancelled = false;
     setFig(null);
     setStatus('loading');
-    fetchChart(chartName).then((data) => {
+    _fetch(chartName).then((data) => {
       if (cancelled) return;
       if (!data) { setStatus('unavailable'); return; }
       try {
@@ -23,7 +25,7 @@ export default function PlotlyChart({ chartName, minHeight = 400, refreshKey }) 
       } catch { setStatus('error'); }
     });
     return () => { cancelled = true; };
-  }, [chartName, refreshKey]);
+  }, [chartName, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!fig || !divRef.current) return;

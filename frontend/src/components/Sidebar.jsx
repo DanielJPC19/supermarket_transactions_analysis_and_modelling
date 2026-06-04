@@ -13,12 +13,13 @@ export const DRAWER_WIDTH = 240;
 const NAV_ITEMS = [
   { id: 'etl',          label: 'ETL',           icon: <StorageIcon />,     enabled: true  },
   { id: 'eda',          label: 'EDA + KPIs',    icon: <BarChartIcon />,    enabled: true  },
-  { id: 'kmeans',       label: 'K-Means',       icon: <ScatterPlotIcon />, enabled: false },
+  { id: 'kmeans',       label: 'K-Means',       icon: <ScatterPlotIcon />, enabled: true  },
   { id: 'recomendador', label: 'Recomendador',  icon: <RecommendIcon />,   enabled: false },
 ];
 
 export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWarm }) {
-  const etlStatus = jobStatus?.ETL?.status ?? null;
+  const etlStatus    = jobStatus?.ETL?.status    ?? null;
+  const kmeansStatus = jobStatus?.KMeans?.status ?? null;
 
   return (
     <Drawer
@@ -55,7 +56,9 @@ export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWa
             id === 'eda' ? (cacheWarm
               ? <Chip size="small" label="Listo" color="success" sx={{ fontWeight: 500 }} />
               : <Chip size="small" label="Computando" color="warning" sx={{ fontWeight: 500 }} />
-            ) : null;
+            ) :
+            id === 'kmeans' && kmeansStatus ? <StatusBadge status={kmeansStatus} /> :
+            null;
 
           return (
             <Tooltip

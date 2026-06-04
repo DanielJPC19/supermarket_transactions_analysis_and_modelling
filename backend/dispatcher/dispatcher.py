@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import shutil
 from typing import Any
 
 from backend.config import (
@@ -11,6 +12,8 @@ from backend.config import (
     ETL_FORCE_RERUN,
     SPARK_MASTER_URL,
     SPARK_APP_NAME,
+    TRANSACTIONS_ENRICHED_DIR,
+    TRANSACTIONS_ENRICHED_BACKUP_DIR,
 )
 from backend.etl.reader import read_transactions, read_product_category, read_categories
 from backend.etl.transformer import run_transformations
@@ -42,6 +45,34 @@ def _load_fingerprint() -> str | None:
 def _save_fingerprint(fp: str) -> None:
     _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     _STATE_FILE.write_text(json.dumps({"fingerprint": fp}))
+
+
+def _backup_enriched() -> bool:
+    """Copia transactions_enriched → backup antes de sobreescribir. Retorna True si se creó copia."""
+    if not TRANSACTIONS_ENRICHED_DIR.exists():
+        return False
+    if TRANSACTIONS_ENRICHED_BACKUP_DIR.exists():
+        shutil.rmtree(TRANSACTIONS_ENRICHED_BACKUP_DIR)
+    shutil.copytree(TRANSACTIONS_ENRICHED_DIR, TRANSACTIONS_ENRICHED_BACKUP_DIR)
+    logger.info("Backup de datos previos creado en %s", TRANSACTIONS_ENRICHED_BACKUP_DIR)
+    return True
+
+
+def _restore_from_backup() -> bool:
+    """Restaura backup → transactions_enriched. Elimina el backup tras restaurar. Retorna True si restauró."""
+    if not TRANSACTIONS_ENRICHED_BACKUP_DIR.exists():
+        return False
+    if TRANSACTIONS_ENRICHED_DIR.exists():
+        shutil.rmtree(TRANSACTIONS_ENRICHED_DIR)
+    shutil.copytree(TRANSACTIONS_ENRICHED_BACKUP_DIR, TRANSACTIONS_ENRICHED_DIR)
+    shutil.rmtree(TRANSACTIONS_ENRICHED_BACKUP_DIR)
+    logger.info("Datos restaurados desde backup")
+    return True
+
+
+def rollback_enriched() -> bool:
+    """Rollback manual: igual que _restore_from_backup. Función pública para el endpoint."""
+    return _restore_from_backup()
 
 
 def etl_needed() -> bool:
@@ -77,9 +108,17 @@ def run_etl(loop: asyncio.AbstractEventLoop | None = None) -> None:
         df_tx = read_transactions(spark)
         df_pc = read_product_category(spark)
         df_cat = read_categories(spark)
-
         df_enriched = run_transformations(df_tx, df_pc, df_cat)
-        write_transactions_enriched(df_enriched)
+
+        # Backup antes de sobreescribir (Spark overwrite borra el dir primero)
+        backup_made = _backup_enriched()
+        try:
+            write_transactions_enriched(df_enriched)
+        except Exception:
+            if backup_made:
+                _restore_from_backup()
+                logger.info("Datos anteriores restaurados automáticamente tras fallo en escritura Parquet")
+            raise  # se propaga al handler externo
 
         from backend.eda_kpis.cache import invalidate_all as _invalidate_kpis
         _invalidate_kpis()

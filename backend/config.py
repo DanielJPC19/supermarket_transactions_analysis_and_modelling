@@ -20,7 +20,8 @@ CATEGORIES_FILE: Path = _products_dir / "Categories.csv"
 
 # ── Datos procesados (Bucket de Datos) ───────────────────────────────────────
 PROCESSED_DIR: Path = PROJECT_ROOT / os.getenv("PROCESSED_DIR", "data/processed")
-TRANSACTIONS_ENRICHED_DIR: Path = PROCESSED_DIR / "transactions_enriched"
+TRANSACTIONS_ENRICHED_DIR: Path        = PROCESSED_DIR / "transactions_enriched"
+TRANSACTIONS_ENRICHED_BACKUP_DIR: Path = PROCESSED_DIR / "transactions_enriched_backup"
 
 # ── ETL ──────────────────────────────────────────────────────────────────────
 ETL_FORCE_RERUN: bool = os.getenv("ETL_FORCE_RERUN", "false").lower() == "true"
@@ -44,3 +45,9 @@ KPI_CATEGORIAS          = "categorias_rentables.json"
 CHART_SERIE_TIEMPO      = "chart_serie_tiempo.json"
 CHART_BOXPLOT           = "chart_boxplot.json"
 CHART_HEATMAP           = "chart_heatmap.json"
+
+# ── K-Means Cache ─────────────────────────────────────────────────────────────
+KMEANS_CACHE_DIR        = PROCESSED_DIR / "kmeans"
+KMEANS_ASSIGNMENTS_FILE = "cluster_assignments.json"
+KMEANS_PROFILES_FILE    = "cluster_profiles.json"
+KMEANS_METRICS_FILE     = "evaluation_metrics.json"

@@ -6,8 +6,9 @@ const WS_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000')
 const RECONNECT_DELAY_MS = 3000;
 
 export function useJobStatus() {
-  const [jobs, setJobs] = useState({ ETL: null, KPIs: null });
-  const wsRef = useRef(null);
+  const [jobStatus,      setJobStatus]      = useState({});
+  const [lastSuccessful, setLastSuccessful] = useState({});
+  const wsRef   = useRef(null);
   const retryRef = useRef(null);
 
   useEffect(() => {
@@ -19,20 +20,23 @@ export function useJobStatus() {
         try {
           const data = JSON.parse(e.data);
           if (Array.isArray(data)) {
-            // Historial inicial: tomar el más reciente por tipo
-            const latest = {};
+            // Historial inicial: extraer más reciente y último exitoso por tipo
+            const latestByType = {};
+            const lastSuccByType = {};
             for (const job of data) {
-              if (!latest[job.job_type] || job.id > latest[job.job_type].id) {
-                latest[job.job_type] = job;
-              }
+              if (!latestByType[job.job_type] || job.id > latestByType[job.job_type].id)
+                latestByType[job.job_type] = job;
+              if (job.status === 'completed')
+                if (!lastSuccByType[job.job_type] || job.id > lastSuccByType[job.job_type].id)
+                  lastSuccByType[job.job_type] = job;
             }
-            setJobs((prev) => ({
-              ETL: latest['ETL'] ?? prev.ETL,
-              KPIs: latest['KPIs'] ?? prev.KPIs,
-            }));
+            setJobStatus(prev => ({ ...prev, ...latestByType }));
+            setLastSuccessful(prev => ({ ...prev, ...lastSuccByType }));
           } else {
             // Update en tiempo real
-            setJobs((prev) => ({ ...prev, [data.type]: data }));
+            setJobStatus(prev => ({ ...prev, [data.type]: data }));
+            if (data.status === 'completed')
+              setLastSuccessful(prev => ({ ...prev, [data.type]: data }));
           }
         } catch {
           // mensaje malformado — ignorar
@@ -51,5 +55,5 @@ export function useJobStatus() {
     };
   }, []);
 
-  return jobs;
+  return { jobStatus, lastSuccessful };
 }
