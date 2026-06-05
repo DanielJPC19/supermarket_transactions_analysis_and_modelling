@@ -107,11 +107,10 @@ def chart_top_products_heatmap(customer_recs: dict, cluster_profiles: list | Non
     ))
 
     fig.update_layout(
-        **_LAYOUT_BASE,
+        **{**_LAYOUT_BASE, "margin": dict(l=100, r=30, t=60, b=120)},
         title=dict(text="Top Productos por Cluster (Score promedio de recomendación)", x=0.5),
         xaxis=dict(title="Producto", tickangle=-45),
         yaxis=dict(title="Cluster"),
-        margin=dict(l=100, r=30, t=60, b=120),
     )
 
     return json.dumps(fig.to_dict(), ensure_ascii=False)

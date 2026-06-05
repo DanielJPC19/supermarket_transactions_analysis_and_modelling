@@ -227,6 +227,7 @@ def build_cooccurrence(train_df):
     items = items.join(valid_baskets, on="basket_id", how="inner")
 
     n_valid = valid_baskets.count()
+    total_baskets = basket_sizes.count()  # conteo pre-filtrado usando basket_sizes ya calculado
     logger.info("Co-ocurrencia: %d/%d canastas válidas (tamaño 2-50)", n_valid, total_baskets)
     if n_valid == 0:
         logger.warning("Sin canastas válidas para co-ocurrencia — product_cooccurrence.json quedará vacío")
@@ -234,12 +235,11 @@ def build_cooccurrence(train_df):
     # Muestrear canastas: limita el self-join a ~5M pares intermedios
     # 50k × avg-15² / 2 ≈ 5.6M pares → 176 MB con 16 tasks concurrentes (cabe en 2g)
     MAX_BASKETS_COOC = 50_000
-    total_baskets = items.select("basket_id").distinct().count()
-    if total_baskets > MAX_BASKETS_COOC:
-        frac = MAX_BASKETS_COOC / total_baskets
+    if n_valid > MAX_BASKETS_COOC:
+        frac = MAX_BASKETS_COOC / n_valid
         sampled = items.select("basket_id").distinct().sample(fraction=frac, seed=42)
         items = items.join(sampled, on="basket_id", how="inner")
-        logger.info("Co-ocurrencia: muestreadas %d/%d canastas (frac=%.4f)", MAX_BASKETS_COOC, total_baskets, frac)
+        logger.info("Co-ocurrencia: muestreadas %d/%d canastas (frac=%.4f)", MAX_BASKETS_COOC, n_valid, frac)
 
     # Cachear items antes del self-join: evita 3 evaluaciones del plan completo
     # (items_a, items_b y item_counts harían cada uno un escaneo full de 37M filas)

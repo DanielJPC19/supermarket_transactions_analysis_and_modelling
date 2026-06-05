@@ -34,16 +34,18 @@ Frontend React (Vite — puerto 5173)
     ├── dispatcher/   →  Orquestación de jobs Spark + watcher de archivos
     ├── eda_kpis/     →  Cómputo de KPIs y generación de visualizaciones
     ├── kmeans/       →  Segmentación de clientes (K-Means PySpark MLlib)
+    ├── recommender/  →  Recomendador de productos (filtrado colaborativo + co-ocurrencia)
     └── websocket/    →  ConnectionManager + SQLite de estado de jobs
               ↕
     spark_jobs/       →  SparkSession (local[*] o cluster) + jobs standalone
-    ├── session.py    →  SparkSession singleton compartida (ETL y KPIs)
-    └── kmeans_job.py →  Job K-Means standalone (spark-submit ready)
+    ├── session.py       →  SparkSession singleton compartida (ETL y KPIs)
+    ├── kmeans_job.py    →  Job K-Means standalone (spark-submit ready)
+    └── recommender_job.py → Job Recomendador standalone (spark-submit ready)
               ↕
     Spark Master + Driver → Workers
 ```
 
-Los datos procesados se almacenan como **Parquet particionado** en `data/processed/transactions_enriched/` (simula el Bucket de Datos de la arquitectura). Los KPIs calculados se cachean como JSON en `data/processed/kpis/`. Los resultados de K-Means se almacenan en `data/processed/kmeans/`. El estado de todos los jobs se persiste en `data/jobs.db` (SQLite, separado del bucket).
+Los datos procesados se almacenan como **Parquet particionado** en `data/processed/transactions_enriched/` (simula el Bucket de Datos de la arquitectura). Los KPIs calculados se cachean como JSON en `data/processed/kpis/`. Los resultados de K-Means se almacenan en `data/processed/kmeans/`. Los resultados del Recomendador se almacenan en `data/processed/recommender/`. El estado de todos los jobs se persiste en `data/jobs.db` (SQLite, separado del bucket).
 
 Antes de cada escritura Parquet, el dispatcher crea un backup en `data/processed/transactions_enriched_backup/` que permite rollback automático (en caso de fallo del ETL) o manual (desde el panel de gestión).
 
@@ -221,7 +223,7 @@ Al arrancar, el servidor ejecuta automáticamente los siguientes pasos en orden:
 4. **Cómputo de KPIs** — si el cache de KPIs no está disponible, lanza en background el cómputo de los 9 indicadores y charts con PySpark (~3–8 minutos en local). Los resultados se guardan en `data/processed/kpis/`. El estado también se registra en `data/jobs.db` y se transmite por WebSocket.
 5. **Watcher de archivos** — inicia un proceso en background que monitorea `DataSet/DataSet/Transactions/`. Si detecta un nuevo archivo `*_Tran.csv`, re-ejecuta el ETL y el cómputo de KPIs automáticamente.
 
-> **Nota sobre tiempos:** El ETL sobre 1.1 millones de transacciones tarda ~2–4 minutos en `local[*]`. El cómputo de KPIs sobre los ~10.5 millones de filas enriquecidas tarda ~3–8 minutos adicionales. El K-Means evalúa 4 valores de K con MLlib y puede tardar ~5–15 minutos. En ejecuciones posteriores los dos primeros pasos se omiten si los datos no cambiaron.
+> **Nota sobre tiempos:** El ETL sobre 1.1 millones de transacciones tarda ~2–4 minutos en `local[*]`. El cómputo de KPIs sobre los ~10.5 millones de filas enriquecidas tarda ~3–8 minutos adicionales. El K-Means evalúa 4 valores de K con MLlib y puede tardar ~5–15 minutos. El Recomendador (filtrado colaborativo + co-ocurrencia) tarda ~3–5 minutos adicionales tras K-Means. En ejecuciones posteriores los pasos de ETL y KPIs se omiten si los datos no cambiaron.
 
 ### Terminal 2 — Frontend (React)
 
@@ -264,7 +266,7 @@ La interfaz cuenta con una barra lateral permanente con las siguientes secciones
 | **ETL** | Activo | Panel de gestión del pipeline: 4 tarjetas de estado + trigger manual + rollback |
 | **EDA + KPIs** | Activo | Dashboard analítico completo |
 | **K-Means** | Activo | Segmentación de clientes con clustering distribuido |
-| **Recomendador** | Próximamente | Sistema de recomendación de productos |
+| **Recomendador** | Activo | Sistema de recomendación de productos por filtrado colaborativo y co-ocurrencia |
 
 ### Sección: Gestión del Pipeline (ETL)
 
@@ -275,7 +277,7 @@ Muestra en tiempo real (via WebSocket) el estado de todos los jobs del sistema, 
 | Estado del ETL | `ETL` | Ingesta y transformación de datos crudos |
 | Estado de KPIs | `KPIs` | Cómputo de indicadores y charts analíticos |
 | Estado de K-Means | `KMeans` | Job de segmentación de clientes (spark-submit) |
-| Estado del Recomendador | `Recomendador` | Sistema de recomendación (a implementar) |
+| Estado del Recomendador | `Recomendador` | Job de recomendación de productos (filtrado colaborativo + co-ocurrencia) |
 
 Cada tarjeta muestra:
 - **Badge de estado** en tiempo real: `Ejecutando…` / `Completado` / `Error` / `Rollback`
@@ -396,6 +398,97 @@ Tres archivos JSON en `data/processed/kmeans/`:
 | `cluster_profiles.json` | Media de cada feature por cluster + tamaño del grupo |
 | `evaluation_metrics.json` | `best_k`, y para cada K: `silhouette` y `wssse` |
 
+### Sección: Recomendador — Recomendación de Productos
+
+La recomendación se ejecuta manualmente desde esta sección haciendo click en **"Ejecutar Recomendador"**. Requiere que K-Means haya corrido primero (usa `full_cluster_assignments.json`). El job corre como proceso Spark independiente (spark-submit) y emite estado por WebSocket.
+
+**Visualizaciones y herramientas disponibles** (aparecen al completar el análisis):
+
+| Elemento | Tipo | Descripción |
+|----------|------|-------------|
+| Métricas Precision@10 / Recall@10 | KPI cards | Evaluación del modelo sobre el 20% de test temporal |
+| Búsqueda por cliente | Tabla interactiva | Dado un `cliente_id`, muestra su cluster y sus top-10 productos recomendados con score y rank |
+| Búsqueda por producto | Tabla interactiva | Dado un `producto_id`, muestra los productos que co-ocurren con mayor confianza (A→B) |
+| Métricas de evaluación | Barras agrupadas | Precision@10 vs Recall@10 del modelo |
+| Heatmap clusters × productos | Heatmap | Score promedio de recomendación por (cluster, producto); permite identificar preferencias por segmento |
+
+---
+
+## Recomendador: Sistema de Recomendación de Productos
+
+### Algoritmo
+
+El job implementa dos estrategias complementarias:
+
+**1. Filtrado Colaborativo Basado en Clusters**
+
+Usa los clusters de K-Means para recomendar productos populares dentro del grupo de cada cliente:
+
+```
+Parquet (transactions_enriched)  +  full_cluster_assignments.json (K-Means)
+    ↓
+Split temporal 80/20 por fecha (train / test)
+    ↓
+score(cluster C, producto P) = distinct_buyers(C, P, train) / cluster_size(C)
+    Filtro: solo productos con ≥ 3 compradores en el cluster
+    ↓
+Top-10 por cliente: scores del cluster − productos ya comprados en train
+    ↓
+Evaluación: Precision@10 y Recall@10 contra test
+    ↓
+customer_recommendations.json → data/processed/recommender/
+```
+
+**2. Co-ocurrencia (Reglas de Asociación)**
+
+Calcula qué productos se compran juntos en la misma canasta (fecha + sucursal + cliente):
+
+```
+confidence(A→B) = cocount(A,B) / count(A)
+    Filtro mínimo: support ≥ 5 co-ocurrencias
+    Top-20 por producto
+    ↓
+product_cooccurrence.json → data/processed/recommender/
+```
+
+### Parámetros del modelo
+
+| Parámetro | Valor | Descripción |
+|-----------|-------|-------------|
+| `TOP_N` | 10 | Recomendaciones por cliente |
+| `MIN_BUYERS` | 3 | Mínimo de compradores en cluster para incluir el producto |
+| `MIN_SUPPORT` | 5 | Mínimo de co-ocurrencias para una regla de asociación |
+| `TRAIN_RATIO` | 0.8 | Proporción temporal para train (80% fechas más antiguas) |
+
+### Ejecución directa del job (sin UI)
+
+```bash
+# Requiere que K-Means haya corrido primero
+spark-submit spark_jobs/recommender_job.py \
+    --input-dir  data/processed/transactions_enriched \
+    --kmeans-dir data/processed/kmeans \
+    --output-dir data/processed/recommender \
+    --master local[*]
+
+# Vía Python (misma semántica)
+python spark_jobs/recommender_job.py \
+    --input-dir  data/processed/transactions_enriched \
+    --kmeans-dir data/processed/kmeans \
+    --output-dir data/processed/recommender
+```
+
+### Outputs del job
+
+Tres archivos JSON en `data/processed/recommender/`:
+
+| Archivo | Contenido |
+|---------|-----------|
+| `customer_recommendations.json` | Por `cliente_id`: `{cluster, recommendations: [{producto_id, score, rank}]}` |
+| `product_cooccurrence.json` | Por `producto_id`: lista de productos similares con `confidence` y `support` |
+| `evaluation_metrics.json` | `precision_at_10`, `recall_at_10`, `num_users_evaluated`, rangos de fechas train/test |
+
+En caso de fallo, el log completo queda en `data/processed/recommender/last_run.log`.
+
 ---
 
 ## Rollback del ETL
@@ -460,6 +553,8 @@ La API está disponible en `http://localhost:8000`. Documentación interactiva (
 | `POST` | `/analytics/compute` | Fuerza recomputo de todos los KPIs en background |
 | `GET` | `/kmeans/status` | Si los resultados K-Means existen (`cached`) + `best_k` |
 | `POST` | `/kmeans/trigger` | Lanza el job K-Means (spark-submit) en background |
+| `GET` | `/recommender/status` | Si los resultados existen (`cached`) + `kmeans_ready` + métricas |
+| `POST` | `/recommender/trigger` | Lanza el job Recomendador en background (requiere K-Means previo) |
 
 ### WebSocket — Estado de jobs en tiempo real
 
@@ -525,6 +620,18 @@ Cada endpoint retorna un objeto JSON de figura Plotly listo para renderizar con 
 | `GET` | `/kmeans/charts/evaluation-metrics` | Curva del codo + Silhouette Score |
 | `GET` | `/kmeans/charts/cluster-sizes` | Torta — distribución de clientes por cluster |
 
+### Endpoints del Recomendador
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/recommender/status` | `{"cached": bool, "kmeans_ready": bool, "precision_at_10": float\|null, "recall_at_10": float\|null, "num_customers": int\|null}` |
+| `POST` | `/recommender/trigger` | Lanza el job Recomendador en background — 412 si K-Means no corrió aún (202 Accepted) |
+| `GET` | `/recommender/customer/{customer_id}` | `{cliente_id, cluster, recommendations: [{producto_id, score, rank}]}` |
+| `GET` | `/recommender/product/{product_id}` | `{producto_id, similar_products: [{producto_id, confidence, support}]}` |
+| `GET` | `/recommender/evaluation` | Métricas completas del modelo: precision, recall, parámetros y rangos temporales train/test |
+| `GET` | `/recommender/charts/evaluation-metrics` | Barras — Precision@10 vs Recall@10 |
+| `GET` | `/recommender/charts/top-products-heatmap` | Heatmap — clusters × productos por score promedio |
+
 ---
 
 ## Estructura del proyecto
@@ -553,6 +660,11 @@ proyecto/
 │   │   ├── charts.py                   # 4 figuras Plotly (scatter, perfiles, evaluación, tamaños)
 │   │   ├── computer.py                 # Dispatcher: lanza spark-submit + notificaciones WS
 │   │   └── router.py                   # APIRouter /kmeans/* (status, trigger, charts, datos)
+│   ├── recommender/                    # Módulo Recomendador
+│   │   ├── cache.py                    # Cache JSON en data/processed/recommender/
+│   │   ├── charts.py                   # 2 figuras Plotly (evaluation-metrics, top-products-heatmap)
+│   │   ├── computer.py                 # Dispatcher: verifica dep. K-Means, lanza spark-submit + WS
+│   │   └── router.py                   # APIRouter /recommender/* (status, trigger, customer, product, evaluation, charts)
 │   └── websocket/                      # Módulo WebSocket
 │       ├── manager.py                  # ConnectionManager (broadcast a clientes conectados)
 │       └── db.py                       # SQLite: init_db, insert_job, update_job, get_recent_jobs
@@ -562,10 +674,10 @@ proyecto/
 │   ├── vite.config.js
 │   └── src/
 │       ├── main.jsx                    # Entry React
-│       ├── App.jsx                     # Layout: sidebar + secciones ETL / EDA / K-Means
+│       ├── App.jsx                     # Layout: sidebar + secciones ETL / EDA / K-Means / Recomendador
 │       ├── App.css                     # Estilos mínimos custom
 │       ├── api/
-│       │   └── analytics.js            # Capa fetch: /analytics/*, /etl/*, /kmeans/*
+│       │   └── analytics.js            # Capa fetch: /analytics/*, /etl/*, /kmeans/*, /recommender/*
 │       ├── hooks/
 │       │   └── useJobStatus.js         # WebSocket hook: jobStatus + lastSuccessful por tipo
 │       └── components/
@@ -573,10 +685,12 @@ proyecto/
 │           ├── KpiCard.jsx             # MUI Card con número formateado (es-CO)
 │           ├── PlotlyChart.jsx         # Fetch + Plotly.newPlot() con fetchFn configurable
 │           ├── KmeansSection.jsx       # Sección K-Means: botón, cluster cards, 4 gráficos
+│           ├── RecomendadorSection.jsx # Sección Recomendador: botón, métricas, búsqueda, 2 gráficos
 │           └── StatusBadge.jsx         # MUI Chip: running/completed/failed/rolled_back
 ├── spark_jobs/
 │   ├── session.py                      # SparkSession singleton (local[*] o cluster)
-│   └── kmeans_job.py                   # Job standalone K-Means (spark-submit ready)
+│   ├── kmeans_job.py                   # Job standalone K-Means (spark-submit ready)
+│   └── recommender_job.py              # Job standalone Recomendador (spark-submit ready)
 ├── DataSet/DataSet/                    # Datos crudos
 │   ├── Transactions/                   # *_Tran.csv por sucursal
 │   └── Products/                       # Categories.csv, ProductCategory.csv
@@ -587,7 +701,8 @@ proyecto/
         ├── transactions_enriched/      # Parquet particionado por sucursal_id
         ├── transactions_enriched_backup/ # Backup pre-ETL (para rollback)
         ├── kpis/                       # Cache JSON de KPIs y charts analíticos
-        └── kmeans/                     # Cache JSON de resultados K-Means
+        ├── kmeans/                     # Cache JSON de resultados K-Means
+        └── recommender/                # Cache JSON de resultados del Recomendador
 ```
 
 ---
@@ -604,26 +719,6 @@ También se puede forzar manualmente:
 
 ```bash
 curl -X POST http://localhost:8000/etl/trigger
-```
-
----
-
-## Deployment con cluster Spark
-
-Para usar un cluster Spark real en lugar del modo local, cambiar en `.env`:
-
-```ini
-SPARK_MASTER_URL=spark://spark-master:7077
-```
-
-El resto del código no requiere cambios. La `SparkSession` en `spark_jobs/session.py` usa el `SPARK_MASTER_URL` configurado. El job K-Means también recibe el master URL como argumento y lo pasa a su propia `SparkSession`.
-
-Para YARN o Kubernetes:
-
-```ini
-SPARK_MASTER_URL=yarn
-# o
-SPARK_MASTER_URL=k8s://https://kubernetes-api-server:6443
 ```
 
 ---
