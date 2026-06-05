@@ -8,6 +8,8 @@
 **Asignatura:** Procesamiento Distribuido de Datos  
 **Fecha de entrega:** Junio 5, 2026  
 
+> Para acceder al repositorio puede hacer click aquí ["Repositorio"](https://github.com/DanielJPC19/supermarket_transactions_analysis_and_modelling) o copiando y pegando el siguiente enlace en su navegador: https://github.com/DanielJPC19/supermarket_transactions_analysis_and_modelling
+
 ---
 
 ## Tabla de Contenidos
