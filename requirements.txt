@@ -7,3 +7,5 @@ fastapi
 uvicorn[standard]
 plotly==5.24.1
 pandas==3.0.3
+watchfiles==0.21.0
+psycopg2-binary==2.9.9

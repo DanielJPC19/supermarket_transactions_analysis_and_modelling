@@ -11,6 +11,7 @@ import StatusBadge from './components/StatusBadge';
 import KpiCard from './components/KpiCard';
 import PlotlyChart from './components/PlotlyChart';
 import KmeansSection from './components/KmeansSection';
+import RecomendadorSection from './components/RecomendadorSection';
 import { useJobStatus } from './hooks/useJobStatus';
 import { fetchStatus, fetchKpiVentas, fetchKpiTransacciones, fetchEtlStatus, triggerRollback } from './api/analytics';
 
@@ -320,6 +321,9 @@ export default function App() {
           )}
           {activeSection === 'kmeans' && (
             <KmeansSection jobStatus={jobStatus} />
+          )}
+          {activeSection === 'recomendador' && (
+            <RecomendadorSection jobStatus={jobStatus} />
           )}
         </Box>
       </Box>

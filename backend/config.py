@@ -47,7 +47,32 @@ CHART_BOXPLOT           = "chart_boxplot.json"
 CHART_HEATMAP           = "chart_heatmap.json"
 
 # ── K-Means Cache ─────────────────────────────────────────────────────────────
-KMEANS_CACHE_DIR        = PROCESSED_DIR / "kmeans"
-KMEANS_ASSIGNMENTS_FILE = "cluster_assignments.json"
-KMEANS_PROFILES_FILE    = "cluster_profiles.json"
-KMEANS_METRICS_FILE     = "evaluation_metrics.json"
+KMEANS_CACHE_DIR             = PROCESSED_DIR / "kmeans"
+KMEANS_ASSIGNMENTS_FILE      = "cluster_assignments.json"
+KMEANS_PROFILES_FILE         = "cluster_profiles.json"
+KMEANS_METRICS_FILE          = "evaluation_metrics.json"
+KMEANS_FULL_ASSIGNMENTS_FILE = "full_cluster_assignments.json"
+
+# ── Recommender Cache ─────────────────────────────────────────────────────────
+RECOMMENDER_CACHE_DIR    = PROCESSED_DIR / "recommender"
+REC_CUSTOMER_RECS_FILE   = "customer_recommendations.json"
+REC_PRODUCT_COOC_FILE    = "product_cooccurrence.json"
+REC_EVAL_METRICS_FILE    = "evaluation_metrics.json"
+
+# ── PostgreSQL (producción) — activo cuando POSTGRES_HOST está definido ───────
+POSTGRES_HOST:     str  = os.getenv("POSTGRES_HOST", "")
+POSTGRES_PORT:     int  = int(os.getenv("POSTGRES_PORT", "5432"))
+POSTGRES_USER:     str  = os.getenv("POSTGRES_USER", "")
+POSTGRES_PASSWORD: str  = os.getenv("POSTGRES_PASSWORD", "")
+POSTGRES_DB:       str  = os.getenv("POSTGRES_DB", "supermercado_db")
+USE_POSTGRES:      bool = bool(POSTGRES_HOST)
+
+# ── CORS ──────────────────────────────────────────────────────────────────────
+ALLOWED_ORIGINS: list[str] = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:3000",
+).split(",")
+
+# ── File watcher ──────────────────────────────────────────────────────────────
+# Desactivar en producción con blobfuse2 (FUSE no soporta inotify)
+ENABLE_WATCHER: bool = os.getenv("ENABLE_WATCHER", "true").lower() == "true"

@@ -12,8 +12,9 @@ from backend.dispatcher.watcher import watch_and_rerun_etl
 from backend.eda_kpis import cache
 from backend.eda_kpis.router import router as analytics_router, run_kpis_sync
 from backend.kmeans.router import router as kmeans_router
+from backend.recommender.router import router as recommender_router
 from backend.etl.writer import output_exists
-from backend.config import TRANSACTIONS_ENRICHED_DIR, TRANSACTIONS_ENRICHED_BACKUP_DIR
+from backend.config import TRANSACTIONS_ENRICHED_DIR, TRANSACTIONS_ENRICHED_BACKUP_DIR, ALLOWED_ORIGINS
 from backend.websocket import manager, db
 from spark_jobs.session import stop_spark_session
 
@@ -72,13 +73,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(analytics_router)
 app.include_router(kmeans_router)
+app.include_router(recommender_router)
 
 
 @app.get("/health")

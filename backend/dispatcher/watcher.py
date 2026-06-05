@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 
-from backend.config import TRANSACTIONS_DIR
+from backend.config import TRANSACTIONS_DIR, ENABLE_WATCHER
 from backend.dispatcher.dispatcher import run_etl_async
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,10 @@ async def watch_and_rerun_etl() -> None:
     Continúa vigilando aunque el ETL falle en una iteración.
     Se cancela automáticamente en el shutdown de FastAPI (CancelledError).
     """
+    if not ENABLE_WATCHER:
+        logger.info("File watcher deshabilitado (ENABLE_WATCHER=false)")
+        return
+
     try:
         from watchfiles import awatch, Change
     except ImportError:

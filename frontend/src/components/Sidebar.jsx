@@ -14,12 +14,13 @@ const NAV_ITEMS = [
   { id: 'etl',          label: 'ETL',           icon: <StorageIcon />,     enabled: true  },
   { id: 'eda',          label: 'EDA + KPIs',    icon: <BarChartIcon />,    enabled: true  },
   { id: 'kmeans',       label: 'K-Means',       icon: <ScatterPlotIcon />, enabled: true  },
-  { id: 'recomendador', label: 'Recomendador',  icon: <RecommendIcon />,   enabled: false },
+  { id: 'recomendador', label: 'Recomendador',  icon: <RecommendIcon />,   enabled: true  },
 ];
 
 export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWarm }) {
-  const etlStatus    = jobStatus?.ETL?.status    ?? null;
-  const kmeansStatus = jobStatus?.KMeans?.status ?? null;
+  const etlStatus          = jobStatus?.ETL?.status          ?? null;
+  const kmeansStatus       = jobStatus?.KMeans?.status       ?? null;
+  const recomendadorStatus = jobStatus?.Recomendador?.status ?? null;
 
   return (
     <Drawer
@@ -57,7 +58,8 @@ export default function Sidebar({ activeSection, onNavChange, jobStatus, cacheWa
               ? <Chip size="small" label="Listo" color="success" sx={{ fontWeight: 500 }} />
               : <Chip size="small" label="Computando" color="warning" sx={{ fontWeight: 500 }} />
             ) :
-            id === 'kmeans' && kmeansStatus ? <StatusBadge status={kmeansStatus} /> :
+            id === 'kmeans'       && kmeansStatus       ? <StatusBadge status={kmeansStatus} />       :
+            id === 'recomendador' && recomendadorStatus ? <StatusBadge status={recomendadorStatus} /> :
             null;
 
           return (

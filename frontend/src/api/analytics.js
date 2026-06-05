@@ -28,3 +28,14 @@ export const fetchKmeansMetrics = () => get('/kmeans/evaluation-metrics');
 export const fetchKmeansChart = (name) => get(`/kmeans/charts/${name}`);
 export const triggerKmeans = () =>
   fetch(`${BASE}/kmeans/trigger`, { method: 'POST' }).catch(() => null);
+
+// Recomendador
+export const fetchRecommenderStatus = () => get('/recommender/status');
+export const fetchRecommenderEvaluation = () => get('/recommender/evaluation');
+export const fetchRecommenderChart = (name) => get(`/recommender/charts/${name}`);
+export const fetchRecommendationsForCustomer = (customerId) =>
+  get(`/recommender/customer/${encodeURIComponent(customerId)}`);
+export const fetchRecommendationsForProduct = (productId) =>
+  get(`/recommender/product/${encodeURIComponent(productId)}`);
+export const triggerRecommender = () =>
+  fetch(`${BASE}/recommender/trigger`, { method: 'POST' }).catch(() => null);

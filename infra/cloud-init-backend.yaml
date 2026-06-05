@@ -1,0 +1,205 @@
+#cloud-config
+# Backend VM: FastAPI + spark-submit client + blobfuse2
+# Variables inyectadas por Terraform templatefile():
+#   ${storage_account_name}  ${storage_account_key}  ${container_name}
+#   ${spark_private_ip}  ${postgres_host}  ${postgres_password}
+#
+# NOTA: En las secciones de shell (runcmd) los $ de variables shell se
+# escapan como $$ para que Terraform no los interpole.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - openjdk-17-jdk-headless
+  - python3-pip
+  - python3-venv
+  - git
+  - fuse3
+  - curl
+  - wget
+  - lsb-release
+
+write_files:
+  # Configuración de blobfuse2 (usa variables Terraform ${...})
+  - path: /etc/blobfuse2/config.yaml
+    permissions: "0600"
+    content: |
+      logging:
+        type: syslog
+        level: log_warning
+      components:
+        - libfuse
+        - file_cache
+        - attr_cache
+        - azstorage
+      libfuse:
+        attribute-expiration-sec: 120
+        entry-expiration-sec: 120
+        negative-entry-expiration-sec: 240
+        allow-other: true
+      file_cache:
+        path: /tmp/blobfuse2_cache
+        timeout-sec: 120
+        max-size-mb: 4096
+      attr_cache:
+        timeout-sec: 7200
+      azstorage:
+        type: block
+        account-name: ${storage_account_name}
+        account-key: ${storage_account_key}
+        endpoint: https://${storage_account_name}.blob.core.windows.net
+        mode: key
+        container: ${container_name}
+
+  # .env de producción (Terraform inyecta las IPs y passwords reales)
+  - path: /home/azureuser/.env.cloud
+    permissions: "0640"
+    owner: azureuser:azureuser
+    content: |
+      SPARK_MASTER_URL=spark://${spark_private_ip}:7077
+      SPARK_APP_NAME=SupermercadoETL
+
+      DATASET_DIR=/mnt/data/dataset/DataSet
+      TRANSACTIONS_SUBDIR=Transactions
+      PRODUCTS_SUBDIR=Products
+      PROCESSED_DIR=/mnt/data/processed
+
+      ETL_FORCE_RERUN=false
+      ENABLE_WATCHER=false
+
+      API_HOST=0.0.0.0
+      API_PORT=8000
+
+      ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+
+      POSTGRES_HOST=${postgres_host}
+      POSTGRES_PORT=5432
+      POSTGRES_USER=pgadmin
+      POSTGRES_PASSWORD=${postgres_password}
+      POSTGRES_DB=supermercado_db
+
+  # Servicio systemd para blobfuse2
+  - path: /etc/systemd/system/blobfuse2.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Azure Blob Storage FUSE mount (/mnt/data)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=forking
+      ExecStartPre=/bin/mkdir -p /mnt/data /tmp/blobfuse2_cache
+      ExecStart=/usr/bin/blobfuse2 mount /mnt/data \
+          --config-file=/etc/blobfuse2/config.yaml \
+          --allow-other \
+          --background-download
+      ExecStop=/bin/fusermount3 -u /mnt/data
+      Restart=on-failure
+      RestartSec=15
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Servicio systemd para FastAPI
+  - path: /etc/systemd/system/fastapi.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Supermercado FastAPI backend
+      After=network-online.target blobfuse2.service
+      Wants=network-online.target
+
+      [Service]
+      User=azureuser
+      WorkingDirectory=/home/azureuser/proyecto
+      EnvironmentFile=/home/azureuser/proyecto/.env
+      ExecStart=/home/azureuser/proyecto/.venv/bin/uvicorn backend.main:app \
+          --host 0.0.0.0 --port 8000 --workers 1
+      Restart=on-failure
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # ── Instalar blobfuse2 desde el repositorio de Microsoft ─────────────
+  - |
+    DISTRO=$$(lsb_release -cs)
+    curl -sL https://packages.microsoft.com/keys/microsoft.asc \
+      | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] \
+      https://packages.microsoft.com/repos/microsoft-ubuntu-$${DISTRO}-prod \
+      $${DISTRO} main" > /etc/apt/sources.list.d/microsoft.list
+    apt-get update -qq
+    apt-get install -y blobfuse2
+
+  # ── Instalar Spark 3.5.3 (necesario para spark-submit desde backend) ──
+  - |
+    SPARK_VER=3.5.3
+    SPARK_PKG=spark-$${SPARK_VER}-bin-hadoop3
+    wget -q https://downloads.apache.org/spark/$${SPARK_VER}/$${SPARK_PKG}.tgz \
+      -O /tmp/$${SPARK_PKG}.tgz
+    tar xzf /tmp/$${SPARK_PKG}.tgz -C /opt
+    ln -sfn /opt/$${SPARK_PKG} /opt/spark
+    rm /tmp/$${SPARK_PKG}.tgz
+
+  - echo "export SPARK_HOME=/opt/spark" >> /etc/environment
+  - echo "export PATH=\$PATH:/opt/spark/bin:/opt/spark/sbin" >> /etc/environment
+  - |
+    JAVA_HOME=$$(readlink -f /usr/bin/java | sed 's|/bin/java||')
+    echo "export JAVA_HOME=$${JAVA_HOME}" >> /etc/environment
+
+  # ── Montar blobfuse2 ─────────────────────────────────────────────────
+  - mkdir -p /mnt/data /tmp/blobfuse2_cache
+  - chmod 755 /mnt/data
+  - systemctl daemon-reload
+  - systemctl enable blobfuse2.service
+  - systemctl start blobfuse2.service
+
+  # Esperar montaje (máx 30 s)
+  - |
+    for i in $$(seq 1 30); do
+      mountpoint -q /mnt/data && break
+      sleep 1
+    done
+    mountpoint -q /mnt/data || (echo "ERROR: /mnt/data no montado" && exit 1)
+
+  # Crear estructura de directorios en el bucket si no existe
+  - mkdir -p /mnt/data/dataset /mnt/data/processed /mnt/data/processed/kpis
+
+  # ── Clonar el repositorio ─────────────────────────────────────────────
+  # IMPORTANTE: reemplaza la URL por la del repo real antes de apply
+  - |
+    if [ ! -d /home/azureuser/proyecto ]; then
+      git clone https://github.com/DanielJPC19/supermarket_transactions_analysis_and_modelling.git \
+        /home/azureuser/proyecto
+    fi
+    chown -R azureuser:azureuser /home/azureuser/proyecto
+
+  # ── Crear virtualenv e instalar dependencias ──────────────────────────
+  - |
+    cd /home/azureuser/proyecto
+    python3 -m venv .venv
+    .venv/bin/pip install --upgrade pip
+    .venv/bin/pip install -r requirements.txt
+
+  # Copiar .env generado (si no existe un .env personalizado ya)
+  - |
+    if [ ! -f /home/azureuser/proyecto/.env ]; then
+      cp /home/azureuser/.env.cloud /home/azureuser/proyecto/.env
+      chown azureuser:azureuser /home/azureuser/proyecto/.env
+    fi
+
+  # Habilitar FastAPI — arranca en boot, pero NO ahora (el operador debe
+  # revisar/editar .env con ALLOWED_ORIGINS definitivo antes del primer run)
+  - systemctl enable fastapi.service
+
+final_message: |
+  Backend VM lista.
+  Proximos pasos:
+  1. ssh azureuser@BACKEND_IP
+  2. Revisar y completar ~/proyecto/.env (especialmente ALLOWED_ORIGINS)
+  3. sudo systemctl start fastapi.service
+  4. Subir el dataset: az storage blob upload-batch ...

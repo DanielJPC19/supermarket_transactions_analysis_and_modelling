@@ -127,6 +127,15 @@ def save_results(with_pca, best_k: int, eval_results: dict, output_dir: Path) ->
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # --- full_cluster_assignments.json (TODOS los clientes, sin muestreo — para el recomendador) ---
+    full_assignments = {}
+    for row in with_pca.select("cliente_id", "cluster").toLocalIterator():
+        full_assignments[str(row["cliente_id"])] = int(row["cluster"])
+    (output_dir / "full_cluster_assignments.json").write_text(
+        json.dumps(full_assignments, ensure_ascii=False)
+    )
+    logger.info("Guardadas %d asignaciones completas en full_cluster_assignments.json", len(full_assignments))
+
     # --- cluster_assignments.json (max MAX_SCATTER_POINTS para el frontend) ---
     select_cols = ["cliente_id", "cluster", "pca1", "pca2"] + FEATURE_COLS
     sampled = with_pca.select(*select_cols)
