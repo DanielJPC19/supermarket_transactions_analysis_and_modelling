@@ -10,6 +10,8 @@
 
 > Para acceder al repositorio puede hacer click aquí ["Repositorio"](https://github.com/DanielJPC19/supermarket_transactions_analysis_and_modelling) o copiando y pegando el siguiente enlace en su navegador: https://github.com/DanielJPC19/supermarket_transactions_analysis_and_modelling
 
+> Para acceder a la arquitectura de manera visual, abra el archivo que se encuentra en la raíz del proyecto con nombre "arquitectura.pdf"
+
 ---
 
 ## Tabla de Contenidos
